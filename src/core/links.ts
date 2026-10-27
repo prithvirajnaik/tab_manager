@@ -18,10 +18,15 @@ export type Links = {
   closing: number[];
   /** Set once the startup reconciler has run in this browser session. */
   reconciledAt: number | null;
+  /**
+   * topicId -> window it was linked to when deleted, so Undo can relink it. Session-scoped:
+   * after a restart that window id may belong to an unrelated window.
+   */
+  deletedFrom: Record<string, number>;
 };
 
 export function emptyLinks(): Links {
-  return { windows: {}, tabs: {}, groups: {}, closing: [], reconciledAt: null };
+  return { windows: {}, tabs: {}, groups: {}, closing: [], reconciledAt: null, deletedFrom: {} };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -44,6 +49,13 @@ export function parseLinks(raw: unknown): Links {
       ? raw.closing.filter((n): n is number => typeof n === 'number')
       : [],
     reconciledAt: typeof raw.reconciledAt === 'number' ? raw.reconciledAt : null,
+    deletedFrom: isObj(raw.deletedFrom)
+      ? Object.fromEntries(
+          Object.entries(raw.deletedFrom).filter(
+            (e): e is [string, number] => typeof e[1] === 'number',
+          ),
+        )
+      : {},
   };
 }
 

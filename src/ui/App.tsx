@@ -12,6 +12,20 @@ const MINUTE = 60_000;
 
 const count = (n: number) => (n === 1 ? '1 tab' : `${n} tabs`);
 
+/**
+ * Reuses the previous object for every topic that did not change, so memoised cards skip
+ * re-rendering when one topic's window changes.
+ */
+export function keepUnchanged(prev: LoadResult, next: LoadResult): LoadResult {
+  if (!prev.ok || !next.ok) return next;
+  const before = new Map(prev.store.topics.map((t) => [t.id, t]));
+  const topics = next.store.topics.map((t) => {
+    const old = before.get(t.id);
+    return old && JSON.stringify(old) === JSON.stringify(t) ? old : t;
+  });
+  return { ok: true, store: { ...next.store, topics } };
+}
+
 export function App({ initial, api, now = Date.now }: Props) {
   const [load, setLoad] = useState<LoadResult>(initial);
   const [windowId, setWindowId] = useState<number | null>(null);
@@ -26,7 +40,7 @@ export function App({ initial, api, now = Date.now }: Props) {
   const topicsRef = useRef(load.ok ? load.store.topics : []);
   topicsRef.current = load.ok ? load.store.topics : [];
 
-  useEffect(() => api.subscribe(setLoad), [api]);
+  useEffect(() => api.subscribe((next) => setLoad((prev) => keepUnchanged(prev, next))), [api]);
   useEffect(() => {
     void api.currentWindowId().then(setWindowId);
   }, [api]);

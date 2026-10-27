@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/preact';
-import { App } from '../../src/ui/App';
+import { App, keepUnchanged } from '../../src/ui/App';
 import type { Api, LoadResult } from '../../src/ui/api';
 import type { Command } from '../../src/core/messages';
 import { savedTab, store, topic } from '../unit/factories';
@@ -34,6 +34,22 @@ function expand(summary: string) {
   details.open = true;
   fireEvent(details, new Event('toggle'));
 }
+
+describe('keepUnchanged', () => {
+  it('keeps unchanged topics as the same objects', () => {
+    const a = topic({ id: 'a' });
+    const b = topic({ id: 'b' });
+    const next = keepUnchanged(
+      loaded(store({ topics: [a, b] })),
+      loaded(store({ topics: [structuredClone(a), { ...b, windowId: 5 }] })),
+    );
+    if (!next.ok) throw new Error('expected ok');
+    expect(next.store.topics[0]).toBe(a);
+    expect(next.store.topics[1]).not.toBe(b);
+    expect(next.store.topics[1]?.windowId).toBe(5);
+    expect(keepUnchanged({ ok: false, error: 'x' }, loaded())).toEqual(loaded());
+  });
+});
 
 describe('App', () => {
   it('shows an empty state and the save form when there are no topics', () => {

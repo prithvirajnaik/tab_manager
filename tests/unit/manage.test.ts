@@ -46,6 +46,17 @@ describe('deleteTopic and undoDelete', () => {
     ]);
   });
 
+  it('does not relink after a browser restart, when window ids may be reused', async () => {
+    const { browser, service, repo, session } = setup();
+    const { windowId } = browser.open(['https://a/']);
+    const t = await service.saveWindow(windowId, 'A');
+    await service.deleteTopic(t.id);
+    session.data = {};
+    await service.undoDelete(t.id);
+    expect((await repo.read()).topics[0]?.windowId).toBeNull();
+    expect((await repo.read()).trash).toEqual([]);
+  });
+
   it('restores unlinked when the window closed or was saved as another topic meanwhile', async () => {
     const { browser, service, repo } = setup();
     const w1 = browser.open(['https://a/']).windowId;

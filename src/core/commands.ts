@@ -329,8 +329,7 @@ export function createService(deps: ServiceDeps) {
             const cutoff = at - TRASH_DAYS * DAY;
             s.topics = s.topics.filter((t) => t.id !== topicId);
             s.trash = [
-              // windowId is kept so Undo can relink the window if it is still open.
-              { topic: { ...topic, windowId }, deletedAt: at },
+              { topic: { ...topic, windowId: null }, deletedAt: at },
               ...s.trash.filter((e) => e.deletedAt >= cutoff),
             ];
             return s;
@@ -338,7 +337,13 @@ export function createService(deps: ServiceDeps) {
           { snapshot: true },
         );
         // Stale tab links are dropped by the next sync, which rebuilds them from linked windows.
-        if (windowId !== null) await linkStore.write(unbindWindow(links, windowId));
+        if (windowId !== null) {
+          const unbound = unbindWindow(links, windowId);
+          await linkStore.write({
+            ...unbound,
+            deletedFrom: { ...unbound.deletedFrom, [topicId]: windowId },
+          });
+        }
       });
     },
 
@@ -350,7 +355,9 @@ export function createService(deps: ServiceDeps) {
         if (!entry) throw new UserError('Deleted topic not found.');
         const restoredId = store.topics.some((t) => t.id === topicId) ? newId() : topicId;
         const links = await linkStore.read();
-        const previous = entry.topic.windowId;
+        const previous = links.deletedFrom[topicId] ?? null;
+        const deletedFrom = { ...links.deletedFrom };
+        delete deletedFrom[topicId];
         const relink =
           previous !== null &&
           links.windows[String(previous)] === undefined &&
@@ -362,13 +369,13 @@ export function createService(deps: ServiceDeps) {
           s.topics.push({ ...entry.topic, id: restoredId, windowId: relink });
           return s;
         });
-        if (relink !== null) {
-          await linkStore.write({
-            ...links,
-            windows: { ...links.windows, [String(relink)]: restoredId },
-          });
-          await syncLinked();
-        }
+        await linkStore.write({
+          ...links,
+          deletedFrom,
+          windows:
+            relink === null ? links.windows : { ...links.windows, [String(relink)]: restoredId },
+        });
+        if (relink !== null) await syncLinked();
       });
     },
   };

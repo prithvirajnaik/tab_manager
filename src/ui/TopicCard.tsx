@@ -59,13 +59,18 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: 
   // Set once Enter/Escape has handled the edit, so the blur that follows does nothing.
   const settled = useRef(false);
   const renameButton = useRef<HTMLButtonElement>(null);
-  const wasEditing = useRef(false);
+  const renameInput = useRef<HTMLInputElement>(null);
+  // Focus goes back to Rename after Enter or Escape, not after tabbing away.
+  const refocus = useRef(false);
   const isOpen = topic.windowId !== null;
   const headingId = `topic-${topic.id}`;
 
   useEffect(() => {
-    if (wasEditing.current && !editing) renameButton.current?.focus();
-    wasEditing.current = editing;
+    if (editing) renameInput.current?.focus();
+    else if (refocus.current) {
+      refocus.current = false;
+      renameButton.current?.focus();
+    }
   }, [editing]);
 
   const finish = (save: boolean) => {
@@ -101,12 +106,14 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: 
             aria-label={`New name for ${topic.name}`}
             value={draft}
             maxLength={200}
-            autoFocus
+            ref={renameInput}
             onInput={(e) => setDraft(e.currentTarget.value)}
             onBlur={() => finish(true)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') finish(true);
-              if (e.key === 'Escape') finish(false);
+              if (e.key === 'Enter' || e.key === 'Escape') {
+                refocus.current = true;
+                finish(e.key === 'Enter');
+              }
             }}
           />
         ) : (
@@ -161,9 +168,11 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: 
           ref={renameButton}
           type="button"
           class="btn btn--quiet"
-          disabled={busy}
+          // aria-disabled, not disabled: it must stay focusable while the rename is saving.
+          aria-disabled={busy}
           aria-label={`Rename ${topic.name}`}
           onClick={() => {
+            if (busy) return;
             settled.current = false;
             setDraft(topic.name);
             setEditing(true);
