@@ -14,6 +14,12 @@ export default tseslint.config(
       'no-restricted-globals': [
         'error',
         { name: 'chrome', message: 'Use src/adapters/browser.ts' },
+        { name: 'browser', message: 'Use src/adapters/browser.ts' },
+      ],
+      'no-restricted-properties': [
+        'error',
+        { object: 'globalThis', property: 'chrome', message: 'Use src/adapters/browser.ts' },
+        { object: 'globalThis', property: 'browser', message: 'Use src/adapters/browser.ts' },
       ],
       'no-restricted-imports': [
         'error',
@@ -32,7 +38,15 @@ export default tseslint.config(
       'no-restricted-syntax': [
         'error',
         { selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']", message: 'No raw HTML.' },
-        { selector: "MemberExpression[property.name='innerHTML']", message: 'No raw HTML.' },
+        {
+          selector: 'MemberExpression[property.name=/^(innerHTML|outerHTML|srcdoc)$/]',
+          message: 'No raw HTML.',
+        },
+        {
+          selector:
+            'CallExpression[callee.property.name=/^(insertAdjacentHTML|write|writeln|createContextualFragment)$/]',
+          message: 'No raw HTML.',
+        },
       ],
     },
   },
