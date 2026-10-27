@@ -44,6 +44,15 @@ export async function handleMessage(
       case 'detachWindow':
         await service.detachWindow(cmd.topicId);
         return { ok: true };
+      case 'groupTabs':
+        await service.groupTabs(cmd.topicId, cmd.tabIds, cmd.name);
+        return { ok: true };
+      case 'ungroupSection':
+        await service.ungroupSection(cmd.topicId, cmd.sectionId);
+        return { ok: true };
+      case 'moveTab':
+        await service.moveTab(cmd.fromTopicId, cmd.tabId, cmd.toTopicId);
+        return { ok: true };
     }
   } catch (e) {
     if (e instanceof UserError || e instanceof StoreUnreadableError) {

@@ -72,6 +72,7 @@ export class FakeBrowser implements BrowserPort {
     const order = this.windows.get(tab.windowId)!;
     order.splice(order.indexOf(tabId), 1);
     this.tabs.delete(tabId);
+    this.pruneGroups();
     if (order.length === 0) {
       this.windows.delete(tab.windowId);
       return true;
@@ -117,12 +118,19 @@ export class FakeBrowser implements BrowserPort {
     }
   }
 
+  /** Chrome deletes a tab group as soon as it has no tabs. */
+  private pruneGroups() {
+    const used = new Set([...this.tabs.values()].map((t) => t.groupId));
+    for (const id of [...this.groups.keys()]) if (!used.has(id)) this.groups.delete(id);
+  }
+
   private normalize(windowId: number) {
     const order = this.windows.get(windowId);
     if (!order) return;
     const pinned = order.filter((id) => this.tabs.get(id)!.pinned);
     const rest = order.filter((id) => !this.tabs.get(id)!.pinned);
     order.splice(0, order.length, ...pinned, ...rest);
+    this.pruneGroups();
   }
 
   // BrowserPort
@@ -201,6 +209,7 @@ export class FakeBrowser implements BrowserPort {
 
   async ungroupTabs(tabIds: number[]) {
     for (const t of tabIds) this.update(t, { groupId: -1 });
+    this.pruneGroups();
   }
 
   async moveTabs(tabIds: number[], windowId: number, index: number) {

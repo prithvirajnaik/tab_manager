@@ -2,7 +2,8 @@ import type { ComponentChildren } from 'preact';
 import { memo } from 'preact/compat';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ClosedTab, ParkedTab, SavedTab, Topic } from '../core/model';
-import { hostOf, plural, timeAgo } from './format';
+import { plural, timeAgo } from './format';
+import { TabsPanel, type TopicRef } from './TabsPanel';
 
 export type TopicActions = {
   open(topicId: string): void;
@@ -11,6 +12,9 @@ export type TopicActions = {
   rename(topicId: string, name: string): void;
   remove(topicId: string): void;
   restore(topicId: string, tabId: string, from: 'recentlyClosed' | 'parked'): void;
+  group(topicId: string, tabIds: string[], name: string): void;
+  ungroup(topicId: string, sectionId: string): void;
+  move(fromTopicId: string, tabId: string, toTopicId: string): void;
 };
 
 type Props = {
@@ -20,6 +24,8 @@ type Props = {
   now: number;
   favicon: (url: string) => string;
   actions: TopicActions;
+  /** Every topic, for "Move to…"; stable while names do not change. */
+  topicRefs: TopicRef[];
 };
 
 const MAX_ICONS = 12;
@@ -37,15 +43,13 @@ function Disclosure({ summary, children }: { summary: string; children: () => Co
 
 type TabRowProps = {
   tab: SavedTab;
-  favicon?: (url: string) => string;
   meta: string;
   action?: ComponentChildren;
 };
 
-function TabRow({ tab, favicon, meta, action }: TabRowProps) {
+function TabRow({ tab, meta, action }: TabRowProps) {
   return (
     <li class="tab" title={tab.url}>
-      {favicon && <img src={favicon(tab.url)} alt="" width={16} height={16} loading="lazy" />}
       <span class="tab__title">{tab.title || tab.url}</span>
       {tab.pinned && <span class="tab__flag">pinned</span>}
       <span class="tab__host">{meta}</span>
@@ -54,7 +58,7 @@ function TabRow({ tab, favicon, meta, action }: TabRowProps) {
   );
 }
 
-function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: Props) {
+function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions, topicRefs }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(topic.name);
   // Set once Enter/Escape has handled the edit, so the blur that follows does nothing.
@@ -205,12 +209,22 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: 
       </div>
 
       {topic.tabs.length > 0 && (
-        <Disclosure summary="Tabs">
-          {() =>
-            topic.tabs.map((t) => (
-              <TabRow key={t.id} tab={t} favicon={favicon} meta={hostOf(t.url)} />
-            ))
-          }
+        <Disclosure
+          summary={topic.sections.length ? `Tabs and sections (${topic.sections.length})` : 'Tabs'}
+        >
+          {() => (
+            <li class="tabs-panel-host">
+              <TabsPanel
+                topic={topic}
+                otherTopics={topicRefs.filter((t) => t.id !== topic.id)}
+                busy={busy}
+                favicon={favicon}
+                onGroup={(ids, name) => actions.group(topic.id, ids, name)}
+                onUngroup={(sectionId) => actions.ungroup(topic.id, sectionId)}
+                onMove={(tabId, to) => actions.move(topic.id, tabId, to)}
+              />
+            </li>
+          )}
         </Disclosure>
       )}
 

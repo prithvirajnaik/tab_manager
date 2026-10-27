@@ -124,6 +124,17 @@ export function createService(deps: ServiceDeps) {
     });
   }
 
+  /** Live tab ids currently linked to the given saved ids, in the given order. */
+  function liveTabIds(links: Links, savedIds: string[]): number[] {
+    const bySaved = new Map(
+      Object.entries(links.tabs).map(([tabId, saved]) => [saved, Number(tabId)]),
+    );
+    return savedIds.flatMap((id) => {
+      const tabId = bySaved.get(id);
+      return tabId === undefined ? [] : [tabId];
+    });
+  }
+
   async function liveWindowFor(links: Links, topicId: string): Promise<number | null> {
     const windowId = windowForTopic(links, topicId);
     if (windowId === null) return null;
@@ -375,12 +386,36 @@ export function createService(deps: ServiceDeps) {
           if (id === undefined || id < 0) failed.add(saved.id);
           else tabLinks[String(id)] = saved.id;
         });
+        // Recreate the topic's sections as tab groups. A group that fails is skipped; its
+        // tabs stay open, ungrouped.
+        const groupLinks: Record<string, string> = {};
+        for (const section of topic.sections) {
+          const ids = tabs.flatMap((t, i) => {
+            const id = tabIds[i];
+            return t.sectionId === section.id && !t.pinned && id !== undefined && id >= 0
+              ? [id]
+              : [];
+          });
+          if (ids.length === 0) continue;
+          try {
+            const groupId = await browser.groupTabs(windowId, {
+              tabIds: ids,
+              title: section.name,
+              ...(section.color ? { color: section.color } : {}),
+              ...(section.collapsed === undefined ? {} : { collapsed: section.collapsed }),
+            });
+            groupLinks[String(groupId)] = section.id;
+          } catch {
+            // Grouping is cosmetic; never fail an open over it.
+          }
+        }
         const stale = windowForTopic(links, topicId);
         const base = stale === null ? links : unbindWindow(links, stale);
         await linkStore.write({
           ...base,
           windows: { ...base.windows, [String(windowId)]: topicId },
           tabs: { ...base.tabs, ...tabLinks },
+          groups: { ...base.groups, ...groupLinks },
         });
         const at = now();
         await repo.update((s) => {
@@ -521,6 +556,115 @@ export function createService(deps: ServiceDeps) {
         const tabs = { ...links.tabs, [String(addedTabId)]: savedId };
         delete tabs[String(removedTabId)];
         await linkStore.write({ ...links, tabs });
+      });
+    },
+
+    /**
+     * Groups saved tabs into a new named section. In an open topic this creates a real tab
+     * group (the sync then records the section); in a closed one it edits the saved topic.
+     */
+    groupTabs(topicId: string, savedTabIds: string[], name: string): Promise<void> {
+      return run(async () => {
+        const sectionName = name.trim();
+        if (!sectionName) throw new UserError('Give the section a name.');
+        if (sectionName.length > 200)
+          throw new UserError('Section names are limited to 200 characters.');
+        const topic = findTopic(await repo.read(), topicId);
+        const wanted = new Set(savedTabIds);
+        const chosen = topic.tabs.filter((t) => wanted.has(t.id) && !t.pinned);
+        if (chosen.length === 0) throw new UserError('Choose at least one unpinned tab.');
+        const links = await linkStore.read();
+        const windowId = await liveWindowFor(links, topicId);
+        if (windowId !== null) {
+          const live = liveTabIds(
+            links,
+            chosen.map((t) => t.id),
+          );
+          if (live.length) {
+            await browser.groupTabs(windowId, { tabIds: live, title: sectionName });
+            await syncLinked();
+            return;
+          }
+        }
+        const sectionId = newId();
+        await repo.update((s) => {
+          const t = findTopic(s, topicId);
+          t.sections = [...t.sections, { id: sectionId, name: sectionName }];
+          for (const tab of t.tabs)
+            if (wanted.has(tab.id) && !tab.pinned) tab.sectionId = sectionId;
+          t.updatedAt = now();
+          return s;
+        });
+      });
+    },
+
+    /** Removes a section; its tabs stay in the topic, ungrouped. */
+    ungroupSection(topicId: string, sectionId: string): Promise<void> {
+      return run(async () => {
+        const topic = findTopic(await repo.read(), topicId);
+        if (!topic.sections.some((s) => s.id === sectionId))
+          throw new UserError('Section not found.');
+        const links = await linkStore.read();
+        const windowId = await liveWindowFor(links, topicId);
+        if (windowId !== null) {
+          const live = liveTabIds(
+            links,
+            topic.tabs.filter((t) => t.sectionId === sectionId).map((t) => t.id),
+          );
+          if (live.length) await browser.ungroupTabs(live);
+          await syncLinked();
+        }
+        await repo.update((s) => {
+          const t = findTopic(s, topicId);
+          t.sections = t.sections.filter((x) => x.id !== sectionId);
+          for (const tab of t.tabs) if (tab.sectionId === sectionId) delete tab.sectionId;
+          t.updatedAt = now();
+          return s;
+        });
+      });
+    },
+
+    /** Moves a saved tab to another topic, moving or opening the live tab as needed. */
+    moveTab(fromTopicId: string, savedTabId: string, toTopicId: string): Promise<void> {
+      return run(async () => {
+        if (fromTopicId === toTopicId) throw new UserError('The tab is already in that topic.');
+        const store = await repo.read();
+        const tab = findTopic(store, fromTopicId).tabs.find((t) => t.id === savedTabId);
+        if (!tab) throw new UserError('Tab not found.');
+        findTopic(store, toTopicId);
+        const links = await linkStore.read();
+        const fromWindow = await liveWindowFor(links, fromTopicId);
+        const toWindow = await liveWindowFor(links, toTopicId);
+        const [liveId] = fromWindow === null ? [] : liveTabIds(links, [savedTabId]);
+
+        if (liveId !== undefined && toWindow !== null) {
+          // Both open: move the real tab; the sync hands it over, keeping its id.
+          await browser.moveTabs([liveId], toWindow, -1);
+          await syncLinked();
+          return;
+        }
+        const moved: SavedTab = { ...tab };
+        delete moved.sectionId;
+        await repo.update((s) => {
+          const from = findTopic(s, fromTopicId);
+          const to = findTopic(s, toTopicId);
+          from.tabs = from.tabs.filter((t) => t.id !== savedTabId);
+          to.tabs = [...to.tabs, moved];
+          from.updatedAt = to.updatedAt = now();
+          return s;
+        });
+        const tabs = { ...links.tabs };
+        if (liveId !== undefined) delete tabs[String(liveId)];
+        if (toWindow !== null) {
+          const created = await browser.createTab(toWindow, {
+            url: moved.url,
+            pinned: moved.pinned,
+          });
+          tabs[String(created)] = moved.id;
+        }
+        await linkStore.write({ ...links, tabs });
+        // The source topic no longer holds the tab, so closing it is not a "recently closed".
+        if (liveId !== undefined) await browser.removeTabs([liveId]);
       });
     },
 

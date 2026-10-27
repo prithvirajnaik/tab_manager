@@ -75,3 +75,11 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **A 30-minute `maintenance` alarm** (checked on every worker start) expires Recently closed entries and trash older than 30 days, then syncs, as a safety net for missed events.
 - **Imports reject repeated saved-tab ids** across topics.
 - **Randomized event-sequence test**: 150 seeded sequences of 40 steps (add, close, navigate, pin, move within and across windows, close window, open, park, worker restart, browser restart, navigate to an unsaveable URL) assert that no saved-tab id ever disappears from the store. Steps also include a close caught half-way by a sync, a drag through a temporary window, a restart onto the new tab page followed by a late restore, and detach. Invariants: no saved id ever disappears, and none is ever in two places. A mutation check (dropping closed tabs in the reconciler) makes it fail on seed 1.
+
+## Phase 5
+
+- **Sections are Chrome tab groups.** In an open topic, the browser's groups are the truth and syncs mirror them (name, colour, collapsed). Grouping from the new tab page creates a real group, and the sync then records it. In a closed topic, grouping edits the saved topic, and opening it recreates the groups. Pinned tabs cannot be grouped (a Chrome rule).
+- **Group events** (`tabGroups.onCreated/onUpdated/onRemoved/onMoved`) schedule a sync, because renaming or recolouring a group does not fire `tabs.onUpdated`.
+- **Collapsing a group is best effort**: the adapter sets title and colour first, then tries to collapse, so a refused collapse never loses a section's name.
+- **Search is local and synchronous** over every topic's tabs, Parked and Recently closed lists. Every word must match. Scoring: start of a title word 3, inside the title 2, host 1.5, elsewhere in the URL 1, weighted by list (open 1, parked 0.8, closed 0.6). Accents and case are ignored. At most 100 results.
+- **Moving a tab between topics**: if both topics are open, the real tab is moved and the sync hands it over with its saved id. Otherwise the saved tab is moved in storage first, then the live tab is closed or opened as needed, so the move never reads as a close. A moved tab leaves its section behind.
