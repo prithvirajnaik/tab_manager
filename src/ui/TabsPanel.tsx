@@ -45,9 +45,13 @@ export function TabsPanel({
         onChange={() => toggle(t.id)}
       />
       <img src={favicon(t.url)} alt="" width={16} height={16} loading="lazy" />
-      <span class="tab__title">{t.title || t.url}</span>
-      {t.pinned && <span class="tab__flag">pinned</span>}
-      <span class="tab__host">{hostOf(t.url)}</span>
+      <span class="tab__text">
+        <span class="tab__title">{t.title || t.url}</span>
+        <span class="tab__host">
+          {t.pinned ? 'Pinned · ' : ''}
+          {hostOf(t.url)}
+        </span>
+      </span>
       {otherTopics.length > 0 && (
         <MoveTo
           label={t.title || t.url}

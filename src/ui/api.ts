@@ -12,6 +12,10 @@ export type Api = {
   favicon(pageUrl: string): string;
   /** The topic linked to the window this page is in, from session links. */
   currentTopicId(): Promise<string | null>;
+  /** Saves text as a file in the user's downloads. */
+  download(filename: string, text: string): void;
+  /** The stored data exactly as it is, for the "cannot be read" screen. */
+  rawStore(): Promise<string>;
 };
 
 export type LoadResult = { ok: true; store: Store } | { ok: false; error: string };
@@ -54,6 +58,18 @@ export const chromeApi: Api = {
     // The browser's favicon cache: no network requests from this page.
     faviconBase ??= chrome.runtime.getURL('/_favicon/');
     return `${faviconBase}?${new URLSearchParams({ pageUrl, size: '32' }).toString()}`;
+  },
+  download(filename, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
+  async rawStore() {
+    const all = await chrome.storage.local.get(null);
+    return JSON.stringify(all, null, 2);
   },
   async currentTopicId() {
     try {

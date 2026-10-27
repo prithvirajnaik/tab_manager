@@ -17,7 +17,9 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "verify": "npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run test:e2e",
-    "prepare": "simple-git-hooks"
+    "prepare": "simple-git-hooks",
+    "icons": "node scripts/make-icons.mjs",
+    "release": "npm run verify && wxt zip"
   },
   "repository": {
     "type": "git",

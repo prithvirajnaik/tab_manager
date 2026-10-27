@@ -102,3 +102,13 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **Parking closes tabs one at a time** and skips any tab the user activated meanwhile.
 - **Auto-park snapshots at most once a day** (or for 10 or more tabs at once), so a trickle of parking does not rotate useful snapshots out of the ten-slot ring.
 - **Search also covers the unsorted Parked list**, with Restore from the result.
+
+## Phase 7
+
+- **Import merges, never replaces.** Imported topics are added next to the current ones after a snapshot; a clashing topic or tab id gets a new id, so the same file can be imported twice without damage. Replacing everything would be a bulk delete.
+- **Export goes through the service worker** so it can record `lastExportAt`; the page turns the text into a download. A reminder banner shows when topics exist and nothing was exported in 14 days.
+- **Recovery lives on the new tab page**: deleted topics (30-day trash) with Restore, and the snapshot list with a confirm step before a restore. When stored data cannot be read, the page offers only to download it as-is or to start fresh, which keeps the old data under a backup key.
+- **Keyboard**: `/` focuses search, Escape clears it, every control is a native button, input or select with a visible focus ring, and every action button's accessible name includes the topic or tab it acts on. Toasts use a polite live region and pause while hovered or focused. Motion is disabled under `prefers-reduced-motion`.
+- **Icons are generated** by `scripts/make-icons.mjs` (zlib only), so they are reproducible and need no image tools.
+- **Release**: `npm run release` runs `verify`, then `wxt zip`, producing `dist/tab-topics-<version>-chrome.zip`.
+- **Brave-specific behaviour is covered by `docs/brave-checklist.md`**, run by hand, since Playwright only drives its bundled Chromium.

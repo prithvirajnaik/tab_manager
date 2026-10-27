@@ -48,6 +48,12 @@ export const CommandSchema = z.discriminatedUnion('type', [
     autoParkDays: z.number().optional(),
     autoParkMode: z.enum(AUTO_PARK_MODES).optional(),
   }),
+  z.object({ type: z.literal('exportData') }),
+  // 50 MB is far beyond any real export, and keeps a pasted file from exhausting memory.
+  z.object({ type: z.literal('importData'), text: z.string().max(50_000_000) }),
+  z.object({ type: z.literal('listSnapshots') }),
+  z.object({ type: z.literal('restoreSnapshot'), at: z.number() }),
+  z.object({ type: z.literal('resetStore') }),
 ]);
 
 export type Command = z.infer<typeof CommandSchema>;
