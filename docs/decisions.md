@@ -30,3 +30,16 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **Writes are skipped when nothing changed**, so phase 4's per-event syncs do not churn storage.
 - **Only the service worker writes the store**, through one `Repo` instance; extension pages read storage and send commands.
 - **Listing and restoring `store-backup-*` keys** is deferred to phase 7 (export/import and error states UI).
+
+## Phase 2
+
+- **The reconciler and command service live in `src/core`** behind a `BrowserPort` interface (`src/core/ports.ts`); `src/adapters/browser.ts` is its only Chrome implementation, and unit tests use `tests/unit/fakeBrowser.ts`.
+- **Session links** (`windowId -> topicId`, `tabId -> savedTabId`, `groupId -> sectionId`) live in `chrome.storage.session` under one `links` key.
+- **Saving a window links it** to the new topic immediately; phase 4 adds the event wiring that keeps it updated.
+- **Parking syncs the window first**, writes the topic, unlinks the window and marks it closing, then closes it. If closing fails, the saved topic is intact and the window is simply unlinked.
+- **Opening a topic that is already open focuses its window** instead of opening a duplicate.
+- **Topics open tab by tab** into a blank window, so one URL the browser refuses (for example `file:` without file access) does not stop the rest. A tab that fails to open shows up in Recently closed on the next sync, so it is never silently lost.
+- **New tab pages are never saved** (this extension's own page, `chrome://newtab/`, `brave://newtab/`, `about:blank`).
+- **Commands are validated with zod** and accepted only from this extension (`sender.id === runtime.id`). Unexpected errors return a generic message and are logged; `UserError` messages are shown as-is.
+- **Tab data from the browser is sanitized**: titles truncated to 4096 characters, favicon URLs over 8192 characters dropped.
+- **The e2e tests run against a local HTTP server** started per test, never the network.

@@ -8,6 +8,12 @@ export default tseslint.config(
   ...tseslint.configs.strict,
   prettier,
   {
+    rules: {
+      // Records keyed by browser ids are the natural shape for session links.
+      '@typescript-eslint/no-dynamic-delete': 'off',
+    },
+  },
+  {
     files: ['src/core/**/*.ts'],
     rules: {
       // The core must stay browser-free so it can be unit tested.
