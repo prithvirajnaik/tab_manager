@@ -22,7 +22,7 @@ import type { BrowserPort, Clock, LiveGroup, LiveTab } from './ports';
 import { createWriteQueue } from './queue';
 import { reconcileTopic, revertCloses } from './reconcile';
 import { reconcileSections } from './sections';
-import type { Repo } from './repo';
+import { StoreUnreadableError, type Repo } from './repo';
 import { matchWindows, pruneExpired } from './startup';
 import { isBlankPage, isSaveable, openOrder, toSavedTab } from './tabs';
 
@@ -905,7 +905,6 @@ export function createService(deps: ServiceDeps) {
       });
     },
 
-    /** Brings back every parked tab of a topic, or of the unsorted list when topicId is null. */
     /**
      * Brings back every parked tab of a topic, or of the unsorted list when topicId is null.
      * Tabs the browser refuses to open stay parked and are counted as failed.
@@ -984,6 +983,13 @@ export function createService(deps: ServiceDeps) {
               ),
             );
             for (const p of s.unsortedParked) tabIds.add(p.id);
+            // Deleted topics can come back from the trash, so their ids are taken too.
+            for (const e of s.trash) {
+              topicIds.add(e.topic.id);
+              for (const x of [...e.topic.tabs, ...e.topic.recentlyClosed, ...e.topic.parked]) {
+                tabIds.add(x.id);
+              }
+            }
             const fresh = <T extends { id: string }>(x: T): T => {
               if (!tabIds.has(x.id)) {
                 tabIds.add(x.id);
@@ -1026,10 +1032,23 @@ export function createService(deps: ServiceDeps) {
       );
     },
 
-    /** Puts the topics back as they were in a snapshot (itself snapshotting the current ones). */
+    /**
+     * Puts the topics back as they were in a snapshot (itself snapshotting the current ones).
+     * Every window is unlinked first, so the restored topics show as saved and no open window
+     * overwrites them on the next sync; the windows stay open.
+     */
     restoreSnapshot(at: number): Promise<void> {
       return run(async () => {
         await repo.restoreSnapshot(at);
+        const links = await linkStore.read();
+        await linkStore.write({
+          ...links,
+          windows: {},
+          tabs: {},
+          groups: {},
+          merging: [],
+          recentCloses: [],
+        });
       });
     },
 
@@ -1038,7 +1057,16 @@ export function createService(deps: ServiceDeps) {
      * outside the usual relink step, which would need a readable store.
      */
     resetStore(): Promise<{ backupKey: string }> {
-      return queue.run(async () => ({ backupKey: await repo.resetKeepingBackup() }));
+      return queue.run(async () => {
+        // Refuse if the data has become readable again (a stale page, say): nothing to rescue.
+        try {
+          await repo.read();
+        } catch (e) {
+          if (!(e instanceof StoreUnreadableError)) throw e;
+          return { backupKey: await repo.resetKeepingBackup() };
+        }
+        throw new UserError('Your data can be read again. Reload this page.');
+      });
     },
 
     updateSettings(patch: { autoParkDays?: number; autoParkMode?: AutoParkMode }): Promise<void> {
@@ -1122,8 +1150,22 @@ export function createService(deps: ServiceDeps) {
             ? previous
             : null;
         await repo.update((s) => {
+          // Tabs imported or restored meanwhile may have taken some of these ids.
+          const taken = new Set(
+            s.topics.flatMap((t) => [...t.tabs, ...t.recentlyClosed, ...t.parked].map((x) => x.id)),
+          );
+          for (const p of s.unsortedParked) taken.add(p.id);
+          const fresh = <T extends { id: string }>(x: T): T =>
+            taken.has(x.id) ? { ...x, id: newId() } : x;
           s.trash = s.trash.filter((e) => e.topic.id !== topicId);
-          s.topics.push({ ...entry.topic, id: restoredId, windowId: relink });
+          s.topics.push({
+            ...entry.topic,
+            id: restoredId,
+            windowId: relink,
+            tabs: entry.topic.tabs.map(fresh),
+            recentlyClosed: entry.topic.recentlyClosed.map(fresh),
+            parked: entry.topic.parked.map(fresh),
+          });
           return s;
         });
         await linkStore.write({

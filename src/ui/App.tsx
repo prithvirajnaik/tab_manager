@@ -42,13 +42,17 @@ function UnreadableActions({
   onReset: () => void;
 }) {
   const [confirm, setConfirm] = useState(false);
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (confirm) confirmButton.current?.focus();
+  }, [confirm]);
   return (
     <div class="panel__row">
       <button type="button" class="btn" onClick={onDownload}>
         Download the stored data
       </button>
       {confirm ? (
-        <button type="button" class="btn btn--primary" onClick={onReset}>
+        <button ref={confirmButton} type="button" class="btn btn--primary" onClick={onReset}>
           Start fresh (the old data is kept as a backup)
         </button>
       ) : (
@@ -88,8 +92,10 @@ export function App({ initial, api, now = Date.now }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      const typing = target?.closest('input, textarea, select, [contenteditable]');
-      if (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const typing = target?.closest(
+        'input, textarea, select, [contenteditable="true"], [contenteditable=""]',
+      );
+      if (e.key === '/' && !e.isComposing && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const box = document.getElementById('search');
         if (box) {
           e.preventDefault();
@@ -127,6 +133,10 @@ export function App({ initial, api, now = Date.now }: Props) {
         setPending((n) => n - 1);
       }
     };
+    const reportRestore = (res: CommandResponse) => {
+      const failed = res.ok ? (res.data as { failed?: number } | undefined)?.failed : 0;
+      if (failed) showToast({ message: `${count(failed)} could not be opened and stayed parked.` });
+    };
     const actions: TopicActions = {
       open: (topicId) =>
         void run({ type: 'openTopic', topicId }).then((res) => {
@@ -146,7 +156,8 @@ export function App({ initial, api, now = Date.now }: Props) {
       group: (topicId, tabIds, sectionName) =>
         void run({ type: 'groupTabs', topicId, tabIds, name: sectionName }),
       ungroup: (topicId, sectionId) => void run({ type: 'ungroupSection', topicId, sectionId }),
-      restoreAllParked: (topicId) => void run({ type: 'restoreAllParked', topicId }),
+      restoreAllParked: (topicId) =>
+        void run({ type: 'restoreAllParked', topicId }).then(reportRestore),
       move: (fromTopicId, tabId, toTopicId) =>
         void run({ type: 'moveTab', fromTopicId, tabId, toTopicId }),
       remove: (topicId) => {
@@ -169,9 +180,10 @@ export function App({ initial, api, now = Date.now }: Props) {
         return res.ok ? (res.data as AutoParkResult).tabs : null;
       },
       restore: (tabId: string) => void run({ type: 'restoreUnsorted', tabId }),
-      restoreAll: () => void run({ type: 'restoreAllParked', topicId: null }),
+      restoreAll: () => void run({ type: 'restoreAllParked', topicId: null }).then(reportRestore),
     };
-    const dateStamp = () => new Date().toISOString().slice(0, 10);
+    // Local date, so a backup made just before midnight is not dated tomorrow.
+    const dateStamp = () => new Date().toLocaleDateString('sv-SE');
     const backup = {
       export: async () => {
         const res = await run({ type: 'exportData' });
@@ -202,7 +214,18 @@ export function App({ initial, api, now = Date.now }: Props) {
           `tab-topics-raw-${dateStamp()}.json`,
           await latest.current.api.rawStore(),
         ),
-      reset: () => void run({ type: 'resetStore' }),
+      reset: () =>
+        void run({ type: 'resetStore' }).then((res) => {
+          if (res.ok) {
+            const key = (res.data as { backupKey?: string } | undefined)?.backupKey;
+            showToast({
+              message: key
+                ? `Started fresh. The old data is kept in storage as "${key}".`
+                : 'Started fresh. The old data is kept in storage as a backup.',
+            });
+          }
+        }),
+      importError: (message: string) => setError(message),
     };
     return { run, actions, parking, backup, showToast, startToastTimer, pauseToastTimer };
   }, []);
@@ -234,6 +257,14 @@ export function App({ initial, api, now = Date.now }: Props) {
           onDownload={() => void helpers.backup.downloadRaw()}
           onReset={helpers.backup.reset}
         />
+        {error && (
+          <div class="notice notice--error" role="alert">
+            {error}
+          </div>
+        )}
+        <div class="toast-region" role="status" aria-live="polite">
+          {toast && <div class="toast">{toast.message}</div>}
+        </div>
       </main>
     );
   }
@@ -367,6 +398,7 @@ export function App({ initial, api, now = Date.now }: Props) {
           now={minute}
           onExport={() => void backup.export()}
           onImport={(text) => void backup.import(text)}
+          onImportError={backup.importError}
           onUndoDelete={backup.undoDelete}
           onListSnapshots={backup.listSnapshots}
           onRestoreSnapshot={backup.restoreSnapshot}

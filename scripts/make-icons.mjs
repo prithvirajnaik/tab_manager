@@ -3,6 +3,7 @@
 import { Buffer } from 'node:buffer';
 import process from 'node:process';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { URL, fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
 const BG = [47, 91, 211];
@@ -76,6 +77,7 @@ function icon(size) {
   ]);
 }
 
-mkdirSync('public/icon', { recursive: true });
-for (const size of [16, 32, 48, 128]) writeFileSync(`public/icon/${size}.png`, icon(size));
+const out = fileURLToPath(new URL('../public/icon/', import.meta.url));
+mkdirSync(out, { recursive: true });
+for (const size of [16, 32, 48, 128]) writeFileSync(`${out}${size}.png`, icon(size));
 process.stdout.write('icons written to public/icon' + String.fromCharCode(10));

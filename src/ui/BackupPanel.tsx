@@ -1,8 +1,10 @@
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { TrashEntry } from '../core/model';
 import { plural, timeAgo } from './format';
 
 const REMIND_AFTER_MS = 14 * 86_400_000;
+/** The command channel accepts up to 50 MB; real exports are far smaller. */
+export const MAX_IMPORT_BYTES = 50_000_000;
 
 type SnapshotInfo = { at: number; topics: number; tabs: number };
 
@@ -14,6 +16,7 @@ type Props = {
   now: number;
   onExport: () => void;
   onImport: (text: string) => void;
+  onImportError: (message: string) => void;
   onUndoDelete: (topicId: string) => void;
   onListSnapshots: () => Promise<SnapshotInfo[] | null>;
   onRestoreSnapshot: (at: number) => void;
@@ -44,10 +47,15 @@ export function BackupPanel(props: Props) {
   const file = useRef<HTMLInputElement>(null);
   const [snapshots, setSnapshots] = useState<SnapshotInfo[] | null>(null);
   const [confirming, setConfirming] = useState<number | null>(null);
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (confirming !== null) confirmButton.current?.focus();
+  }, [confirming]);
 
   return (
     <section class="panel" aria-labelledby="backup-title">
-      <h2 id="backup-title" class="panel__title">
+      <h2 id="backup-title" class="panel__title" ref={heading} tabIndex={-1}>
         Backup and recovery
       </h2>
       <p class="panel__hint">
@@ -72,11 +80,19 @@ export function BackupPanel(props: Props) {
           accept="application/json,.json"
           class="visually-hidden"
           aria-label="Choose a Tab Topics export file"
+          aria-hidden="true"
           tabIndex={-1}
           onChange={(e) => {
             const chosen = e.currentTarget.files?.[0];
             e.currentTarget.value = '';
-            if (chosen) void chosen.text().then(props.onImport);
+            if (!chosen) return;
+            if (chosen.size > MAX_IMPORT_BYTES) {
+              props.onImportError('That file is too large to be a Tab Topics export.');
+              return;
+            }
+            chosen
+              .text()
+              .then(props.onImport, () => props.onImportError('That file could not be read.'));
           }}
         />
       </div>
@@ -135,12 +151,14 @@ export function BackupPanel(props: Props) {
                 </div>
                 {confirming === s.at ? (
                   <button
+                    ref={confirmButton}
                     type="button"
                     class="btn btn--small btn--primary"
                     disabled={busy}
                     onClick={() => {
                       setConfirming(null);
                       setSnapshots(null);
+                      heading.current?.focus();
                       props.onRestoreSnapshot(s.at);
                     }}
                   >

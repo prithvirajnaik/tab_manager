@@ -15,7 +15,7 @@ Brave version: ________ Date: ________ Result: pass / fail
 - [ ] Save a window with a pinned tab and three normal tabs; the card shows 4 tabs and **This window**.
 - [ ] **Park**: the window closes; the card says **Saved**.
 - [ ] **Open**: a new window opens with the same tabs in order, the pinned tab still pinned.
-- [ ] **Open** again on an open topic focuses its window instead of opening a second one.
+- [ ] **Switch to** on an open topic focuses its window instead of opening a second one.
 - [ ] Rename (Enter saves, Escape cancels), Delete, then **Undo** in the toast; the topic comes back still linked.
 - [ ] Favicons show on the cards (from the browser cache; no network requests in DevTools > Network).
 
@@ -26,7 +26,7 @@ Brave version: ________ Date: ________ Result: pass / fail
 - [ ] Close the whole window with its X: the card says **Saved** and still lists every tab.
 - [ ] Drag a tab from one topic window into another topic's window: it moves to the other topic, and is not listed as closed in the first.
 - [ ] **Full restart**: with two topic windows open and Brave set to _Continue where you left off_, quit Brave and start it again. Both cards relink to their restored windows (they show **Open**, and new tabs in them are saved).
-- [ ] Restart again with Brave set to open the new tab page: topics show **Saved** within about two minutes, with every tab kept.
+- [ ] Restart again with Brave set to open the new tab page: topics show **Saved** within about two minutes, with every tab kept, and nothing is auto-parked in those two minutes.
 - [ ] Reload the extension in `brave://extensions` with topic windows open: they stay linked.
 
 ## Sections and search (phase 5)
@@ -46,8 +46,11 @@ Brave version: ________ Date: ________ Result: pass / fail
 
 - [ ] **Export to a file** downloads `tab-topics-<date>.json`; the backup reminder disappears.
 - [ ] **Import from a file** with that export adds copies and leaves the originals untouched.
-- [ ] **Show snapshots** lists snapshots; restoring one asks for confirmation first.
+- [ ] **Show snapshots** lists snapshots; restoring one asks for confirmation first. With a topic window open, restoring leaves that window open and the topic shows **Saved** with the snapshot's tabs.
+- [ ] Delete a topic, wait for the toast to go, then restore it from **Deleted topics**.
+- [ ] Import a file that is not an export: an error appears and nothing changes.
+- [ ] Unreadable data: in the service worker console run `chrome.storage.local.set({store: {schemaVersion: 999}})`, then open a new tab. The page explains, and offers **Download the stored data** and **Start fresh…** (with a confirm step). Afterwards, import your export again.
 - [ ] Keyboard only: Tab reaches every control with a visible focus ring; `/` focuses search; Escape clears it.
 - [ ] Screen reader (Narrator or NVDA): cards are announced by topic name; buttons say which topic they act on; toasts are announced.
 - [ ] Dark mode (`brave://settings/appearance`): the page follows it and stays readable.
-- [ ] `npm run release` produces `dist/tab-topics-<version>-chrome.zip`, and that zip loads in Brave.
+- [ ] `npm run release` produces `dist/tab-topics-<version>-chrome.zip`; unzip it and **Load unpacked** the folder in Brave.

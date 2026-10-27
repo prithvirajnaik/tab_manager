@@ -112,3 +112,7 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **Icons are generated** by `scripts/make-icons.mjs` (zlib only), so they are reproducible and need no image tools.
 - **Release**: `npm run release` runs `verify`, then `wxt zip`, producing `dist/tab-topics-<version>-chrome.zip`.
 - **Brave-specific behaviour is covered by `docs/brave-checklist.md`**, run by hand, since Playwright only drives its bundled Chromium.
+- **Restoring a snapshot unlinks every window** (they stay open), so open windows cannot overwrite the restored topics on the next sync.
+- **"Start fresh" is refused when the data can be read** again, so a stale page can never move readable data aside.
+- **Imports and Undo avoid ids held by the trash**, so restoring a deleted topic after importing the same export never duplicates tab ids.
+- **Import files over 50 MB are refused in the page**, before they reach the command channel.
