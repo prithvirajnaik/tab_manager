@@ -1,5 +1,6 @@
 import type { SearchResult } from '../core/search';
 import { hostOf } from './format';
+import { MoveTo } from './MoveTo';
 import type { TopicRef } from './TabsPanel';
 
 type Props = {
@@ -56,31 +57,17 @@ export function SearchResults({
                     type="button"
                     class="btn btn--small"
                     disabled={busy}
-                    aria-label={`Open ${r.topicName}`}
+                    aria-label={`Open topic ${r.topicName}`}
                     onClick={() => onOpenTopic(r.topicId)}
                   >
                     Open topic
                   </button>
-                  <select
-                    class="tab__move"
-                    aria-label={`Move ${title} to another topic`}
-                    disabled={busy}
-                    value=""
-                    onChange={(e) => {
-                      const to = e.currentTarget.value;
-                      e.currentTarget.value = '';
-                      if (to) onMove(r.topicId, r.tab.id, to);
-                    }}
-                  >
-                    <option value="">Move to…</option>
-                    {topics
-                      .filter((t) => t.id !== r.topicId)
-                      .map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                  </select>
+                  <MoveTo
+                    label={title}
+                    topics={topics.filter((t) => t.id !== r.topicId)}
+                    busy={busy}
+                    onMove={(to) => onMove(r.topicId, r.tab.id, to)}
+                  />
                 </>
               ) : (
                 <button

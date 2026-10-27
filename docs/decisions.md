@@ -83,3 +83,8 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **Collapsing a group is best effort**: the adapter sets title and colour first, then tries to collapse, so a refused collapse never loses a section's name.
 - **Search is local and synchronous** over every topic's tabs, Parked and Recently closed lists. Every word must match. Scoring: start of a title word 3, inside the title 2, host 1.5, elsewhere in the URL 1, weighted by list (open 1, parked 0.8, closed 0.6). Accents and case are ignored. At most 100 results.
 - **Moving a tab between topics**: if both topics are open, the real tab is moved and the sync hands it over with its saved id. Otherwise the saved tab is moved in storage first, then the live tab is closed or opened as needed, so the move never reads as a close. A moved tab leaves its section behind.
+- **A move into an open topic opens the tab there first**, then updates storage, then closes the old copy; if the browser refuses the tab, nothing has moved.
+- **"Move to…" is a select plus a Move button.** Arrow keys on a closed select change its value in Chromium, so choosing must never act on its own.
+- **Search keeps a normalised index per store** (rebuilt only when the store changes), and the query is deferred, so typing stays fast with thousands of tabs. Only Latin diacritics are folded (U+0300 to U+036F); other scripts' marks, such as Japanese voicing, keep their meaning.
+- **A half-closed window brings back its sections too**: the revert record keeps the topic's sections, since a window's groups vanish with it.
+- **Grouping and ungrouping sync first**, and grouping in an open topic refuses when none of the chosen tabs is still open.

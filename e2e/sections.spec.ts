@@ -61,6 +61,39 @@ test('tab groups survive park and reopen', async ({ ext, site }) => {
   ]);
 });
 
+test('tab groups survive closing the window by hand and reopening', async ({ ext, site }) => {
+  const { windowId, tabIds } = await openWindow(ext, [
+    { url: site.url('one') },
+    { url: site.url('two') },
+  ]);
+  const saved = await send<{ topicId: string }>(ext, { type: 'saveWindow', name: 'G', windowId });
+  await ext.evaluate(
+    async ({ ids, w }) => {
+      const groupId = await chrome.tabs.group({
+        tabIds: [ids[1]!],
+        createProperties: { windowId: w },
+      });
+      await chrome.tabGroups.update(groupId, { title: 'Later', color: 'purple' });
+    },
+    { ids: tabIds, w: windowId },
+  );
+  await expect
+    .poll(async () => (await readStore<Store>(ext)).topics[0]!.sections.map((s) => s.name))
+    .toEqual(['Later']);
+  await ext.evaluate((w) => chrome.windows.remove(w), windowId);
+  await expect.poll(async () => (await readStore<Store>(ext)).topics[0]!.windowId).toBeNull();
+
+  expect(await send(ext, { type: 'openTopic', topicId: saved.data!.topicId })).toMatchObject({
+    ok: true,
+  });
+  const reopened = (await readStore<Store>(ext)).topics[0]!.windowId!;
+  const titles = await ext.evaluate(
+    async (w) => (await chrome.tabGroups.query({ windowId: w })).map((g) => [g.title, g.color]),
+    reopened,
+  );
+  expect(titles).toEqual([['Later', 'purple']]);
+});
+
 test('search finds tabs across topics from the new tab page', async ({ ext, site }) => {
   const a = await openWindow(ext, [{ url: site.url('Kanji drills') }]);
   await send(ext, { type: 'saveWindow', name: 'Japanese', windowId: a.windowId });

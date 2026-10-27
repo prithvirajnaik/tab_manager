@@ -1,6 +1,7 @@
+import { useDeferredValue } from 'preact/compat';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Command, CommandResponse } from '../core/messages';
-import { searchTabs } from '../core/search';
+import { buildIndex, searchTabs } from '../core/search';
 import type { Api, LoadResult } from './api';
 import { SearchResults } from './SearchResults';
 import type { TopicRef } from './TabsPanel';
@@ -124,9 +125,12 @@ export function App({ initial, api, now = Date.now }: Props) {
     // Recomputed only when ids or names change, so cards are not re-rendered for nothing.
     [refsKey],
   );
+  // The index is rebuilt only when the store changes; typing just filters it.
+  const index = useMemo(() => (load.ok ? buildIndex(load.store) : []), [load]);
+  const deferredQuery = useDeferredValue(query);
   const results = useMemo(
-    () => (load.ok && query.trim() ? searchTabs(load.store, query) : []),
-    [load, query],
+    () => (deferredQuery.trim() ? searchTabs(index, deferredQuery) : []),
+    [index, deferredQuery],
   );
 
   if (!load.ok) {

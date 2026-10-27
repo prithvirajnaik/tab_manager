@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { SavedTab, Topic } from '../core/model';
 import { hostOf } from './format';
+import { MoveTo } from './MoveTo';
 
 export type TopicRef = { id: string; name: string };
 
@@ -48,24 +49,12 @@ export function TabsPanel({
       {t.pinned && <span class="tab__flag">pinned</span>}
       <span class="tab__host">{hostOf(t.url)}</span>
       {otherTopics.length > 0 && (
-        <select
-          class="tab__move"
-          aria-label={`Move ${t.title || t.url} to another topic`}
-          disabled={busy}
-          value=""
-          onChange={(e) => {
-            const to = e.currentTarget.value;
-            e.currentTarget.value = '';
-            if (to) onMove(t.id, to);
-          }}
-        >
-          <option value="">Move to…</option>
-          {otherTopics.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
+        <MoveTo
+          label={t.title || t.url}
+          topics={otherTopics}
+          busy={busy}
+          onMove={(to) => onMove(t.id, to)}
+        />
       )}
     </li>
   );

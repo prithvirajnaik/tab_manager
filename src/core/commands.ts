@@ -147,7 +147,16 @@ export function createService(deps: ServiceDeps) {
       if (entry.windowId !== windowId || at - entry.at > REVERT_WINDOW_MS) continue;
       const index = store.topics.findIndex((t) => t.id === entry.topicId);
       const topic = store.topics[index];
-      if (topic) store.topics[index] = revertCloses(topic, entry.ids, entry.order);
+      if (!topic) continue;
+      const reverted = revertCloses(topic, entry.ids, entry.order);
+      // Bring back sections that vanished with the window's groups.
+      const known = new Set(reverted.sections.map((s) => s.id));
+      const lost = (entry.sections ?? []).filter(
+        (s) => !known.has(s.id) && reverted.tabs.some((t) => t.sectionId === s.id),
+      ) as Topic['sections'];
+      store.topics[index] = lost.length
+        ? { ...reverted, sections: [...reverted.sections, ...lost] }
+        : reverted;
     }
     return store;
   }
@@ -273,6 +282,7 @@ export function createService(deps: ServiceDeps) {
             topicId,
             ids: result.closedIds,
             order: topic.tabs.map((t) => t.id),
+            sections: topic.sections,
             at,
           });
         }
@@ -573,6 +583,7 @@ export function createService(deps: ServiceDeps) {
         const wanted = new Set(savedTabIds);
         const chosen = topic.tabs.filter((t) => wanted.has(t.id) && !t.pinned);
         if (chosen.length === 0) throw new UserError('Choose at least one unpinned tab.');
+        await syncLinked();
         const links = await linkStore.read();
         const windowId = await liveWindowFor(links, topicId);
         if (windowId !== null) {
@@ -580,11 +591,10 @@ export function createService(deps: ServiceDeps) {
             links,
             chosen.map((t) => t.id),
           );
-          if (live.length) {
-            await browser.groupTabs(windowId, { tabIds: live, title: sectionName });
-            await syncLinked();
-            return;
-          }
+          if (live.length === 0) throw new UserError('Those tabs are no longer open.');
+          await browser.groupTabs(windowId, { tabIds: live, title: sectionName });
+          await syncLinked();
+          return;
         }
         const sectionId = newId();
         await repo.update((s) => {
@@ -604,12 +614,14 @@ export function createService(deps: ServiceDeps) {
         const topic = findTopic(await repo.read(), topicId);
         if (!topic.sections.some((s) => s.id === sectionId))
           throw new UserError('Section not found.');
+        await syncLinked();
         const links = await linkStore.read();
         const windowId = await liveWindowFor(links, topicId);
         if (windowId !== null) {
+          const current = findTopic(await repo.read(), topicId);
           const live = liveTabIds(
             links,
-            topic.tabs.filter((t) => t.sectionId === sectionId).map((t) => t.id),
+            current.tabs.filter((t) => t.sectionId === sectionId).map((t) => t.id),
           );
           if (live.length) await browser.ungroupTabs(live);
           await syncLinked();
@@ -645,26 +657,36 @@ export function createService(deps: ServiceDeps) {
         }
         const moved: SavedTab = { ...tab };
         delete moved.sectionId;
-        await repo.update((s) => {
-          const from = findTopic(s, fromTopicId);
-          const to = findTopic(s, toTopicId);
-          from.tabs = from.tabs.filter((t) => t.id !== savedTabId);
-          to.tabs = [...to.tabs, moved];
-          from.updatedAt = to.updatedAt = now();
-          return s;
-        });
+        // Open the tab in the target window first: if the browser refuses, nothing has moved.
+        const created =
+          toWindow === null
+            ? undefined
+            : await browser.createTab(toWindow, { url: moved.url, pinned: moved.pinned });
         const tabs = { ...links.tabs };
         if (liveId !== undefined) delete tabs[String(liveId)];
-        if (toWindow !== null) {
-          const created = await browser.createTab(toWindow, {
-            url: moved.url,
-            pinned: moved.pinned,
+        if (created !== undefined) tabs[String(created)] = moved.id;
+        try {
+          await repo.update((s) => {
+            const from = findTopic(s, fromTopicId);
+            const to = findTopic(s, toTopicId);
+            from.tabs = from.tabs.filter((t) => t.id !== savedTabId);
+            to.tabs = [...to.tabs, moved];
+            from.updatedAt = to.updatedAt = now();
+            return s;
           });
-          tabs[String(created)] = moved.id;
+        } catch (e) {
+          if (created !== undefined) await browser.removeTabs([created]).catch(() => undefined);
+          throw e;
         }
         await linkStore.write({ ...links, tabs });
         // The source topic no longer holds the tab, so closing it is not a "recently closed".
-        if (liveId !== undefined) await browser.removeTabs([liveId]);
+        if (liveId !== undefined) {
+          try {
+            await browser.removeTabs([liveId]);
+          } catch {
+            throw new UserError('The tab moved, but its old copy could not be closed.');
+          }
+        }
       });
     },
 

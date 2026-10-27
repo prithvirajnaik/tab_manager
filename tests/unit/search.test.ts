@@ -1,4 +1,4 @@
-import { searchTabs } from '../../src/core/search';
+import { buildIndex, searchTabs } from '../../src/core/search';
 import { savedTab, store, topic } from './factories';
 
 const s = store({
@@ -49,14 +49,44 @@ describe('searchTabs', () => {
   });
 
   it('says where each result lives and ranks live tabs above parked and closed', () => {
-    const results = searchTabs(s, 'k');
-    const parked = searchTabs(s, 'kanji');
-    expect(parked).toEqual([
+    expect(searchTabs(s, 'kanji')).toEqual([
       expect.objectContaining({ topicId: 'jp', topicName: 'Japanese', list: 'parked' }),
     ]);
-    expect(results.length).toBeGreaterThan(0);
-    const travel = searchTabs(s, 'travel')[0]!;
-    expect(travel).toMatchObject({ topicId: 'code', list: 'recentlyClosed' });
+    expect(searchTabs(s, 'travel')[0]).toMatchObject({ topicId: 'code', list: 'recentlyClosed' });
+    const same = store({
+      topics: [
+        topic({
+          id: 't',
+          tabs: [savedTab({ id: 'open', title: 'Same page' })],
+          parked: [{ ...savedTab({ id: 'parked', title: 'Same page' }), parkedAt: 1 }],
+          recentlyClosed: [{ ...savedTab({ id: 'closed', title: 'Same page' }), closedAt: 1 }],
+        }),
+      ],
+    });
+    expect(searchTabs(same, 'same').map((r) => r.tab.id)).toEqual(['open', 'parked', 'closed']);
+  });
+
+  it('finds Japanese words inside titles and keeps Japanese voicing marks distinct', () => {
+    const jp = store({
+      topics: [
+        topic({
+          tabs: [
+            savedTab({ id: 'g', title: '日本語の文法ガイド' }),
+            savedTab({ id: 'k', title: '日本語の文法カイド' }),
+          ],
+        }),
+      ],
+    });
+    expect(
+      searchTabs(jp, '文法')
+        .map((r) => r.tab.id)
+        .sort(),
+    ).toEqual(['g', 'k']);
+    expect(searchTabs(jp, 'ガイド').map((r) => r.tab.id)).toEqual(['g']);
+  });
+
+  it('searches a prebuilt index the same as the store', () => {
+    expect(searchTabs(buildIndex(s), 'japan')).toEqual(searchTabs(s, 'japan'));
   });
 
   it('caps the number of results', () => {

@@ -73,9 +73,12 @@ describe('sections in a topic card', () => {
   it('moves a tab to another topic', async () => {
     const { sent } = setup(data());
     expand(/Tabs and sections/);
-    fireEvent.change(screen.getByLabelText('Move Jisho dictionary to another topic'), {
+    fireEvent.change(screen.getByLabelText('Topic to move Jisho dictionary to'), {
       target: { value: 'code' },
     });
+    // Choosing a topic alone does nothing (arrow keys change a select's value).
+    expect(sent).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Move Jisho dictionary' }));
     await waitFor(() =>
       expect(sent).toEqual([{ type: 'moveTab', fromTopicId: 'jp', tabId: 'b', toTopicId: 'code' }]),
     );
@@ -86,12 +89,13 @@ describe('search', () => {
   it('searches across topics and acts on results', async () => {
     const { sent } = setup(data());
     fireEvent.input(screen.getByLabelText('Search all topics'), { target: { value: 'jisho' } });
-    expect(screen.getByText('1 tab found')).toBeTruthy();
+    expect(await screen.findByText('1 tab found')).toBeTruthy();
     expect(screen.queryByRole('article')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Japanese' }));
-    fireEvent.change(screen.getByLabelText('Move Jisho dictionary to another topic'), {
+    fireEvent.click(screen.getByRole('button', { name: 'Open topic Japanese' }));
+    fireEvent.change(screen.getByLabelText('Topic to move Jisho dictionary to'), {
       target: { value: 'code' },
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Move Jisho dictionary' }));
     await waitFor(() =>
       expect(sent).toEqual([
         { type: 'openTopic', topicId: 'jp' },
@@ -100,11 +104,11 @@ describe('search', () => {
     );
   });
 
-  it('says when nothing matches and clears with Escape', () => {
+  it('says when nothing matches and clears with Escape', async () => {
     setup(data());
     const box = screen.getByLabelText('Search all topics');
     fireEvent.input(box, { target: { value: 'zzz' } });
-    expect(screen.getByText('No tabs match “zzz”.')).toBeTruthy();
+    expect(await screen.findByText('No tabs match “zzz”.')).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(screen.getAllByRole('article')).toHaveLength(2);
   });
@@ -114,7 +118,7 @@ describe('search', () => {
     s.topics[0]!.parked = [{ ...savedTab({ id: 'p', title: 'Old kanji' }), parkedAt: 1 }];
     const { sent } = setup(s);
     fireEvent.input(screen.getByLabelText('Search all topics'), { target: { value: 'kanji' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Restore Old kanji' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore Old kanji' }));
     await waitFor(() =>
       expect(sent).toEqual([{ type: 'restoreTab', topicId: 'jp', tabId: 'p', from: 'parked' }]),
     );

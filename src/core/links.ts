@@ -15,6 +15,8 @@ export type RecentClose = {
   ids: string[];
   /** Saved tab order before the sync, to put them back where they were. */
   order: string[];
+  /** Section ids the topic had before the sync; groups vanish with a closing window too. */
+  sections?: { id: string; name: string; color?: string; collapsed?: boolean }[];
   at: number;
 };
 
@@ -91,7 +93,20 @@ function parseRecentClose(v: unknown): RecentClose[] {
   ) {
     return [];
   }
-  return [{ windowId: v.windowId, topicId: v.topicId, ids: v.ids, order: v.order, at: v.at }];
+  const entry: RecentClose = {
+    windowId: v.windowId,
+    topicId: v.topicId,
+    ids: v.ids,
+    order: v.order,
+    at: v.at,
+  };
+  if (Array.isArray(v.sections)) {
+    entry.sections = v.sections.filter(
+      (s): s is NonNullable<RecentClose['sections']>[number] =>
+        isObj(s) && typeof s.id === 'string' && typeof s.name === 'string',
+    );
+  }
+  return [entry];
 }
 
 export function parseLinks(raw: unknown): Links {

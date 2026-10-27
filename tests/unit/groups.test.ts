@@ -75,6 +75,43 @@ describe('sections mirrored to tab groups', () => {
     ]);
   });
 
+  it('groupTabs refuses when the chosen tabs of an open topic are no longer open', async () => {
+    const { browser, service, repo } = setup();
+    const { windowId, tabIds } = browser.open(['https://a/', 'https://b/']);
+    const topic = await service.saveWindow(windowId, 'T');
+    const [a] = (await repo.read()).topics[0]!.tabs;
+    browser.closeTab(tabIds[0]!);
+    await expect(service.groupTabs(topic.id, [a!.id], 'G')).rejects.toThrow(
+      /no longer open|not found|unpinned/,
+    );
+  });
+
+  it('a half-closed window brings back its sections with its tabs', async () => {
+    const { browser, service, repo, advance } = setup();
+    browser.open(['https://other/']);
+    const { windowId, tabIds } = browser.open(['https://a/', 'https://b/', 'https://c/']);
+    const topic = await service.saveWindow(windowId, 'T');
+    await browser.groupTabs(windowId, { tabIds: [tabIds[1]!, tabIds[2]!], title: 'G' });
+    await service.syncAll();
+    // The close begins: the grouped tabs go first, with their group, and a sync runs.
+    browser.closeTab(tabIds[1]!);
+    browser.closeTab(tabIds[2]!);
+    await service.syncAll();
+    advance(100);
+    await service.noteWindowClosing(windowId);
+    browser.closeWindow(windowId);
+    await service.syncAll();
+    const t = (await repo.read()).topics[0]!;
+    expect(t.sections.map((s) => s.name)).toEqual(['G']);
+    expect(t.tabs.filter((x) => x.sectionId === t.sections[0]!.id).map((x) => x.url)).toEqual([
+      'https://b/',
+      'https://c/',
+    ]);
+    await service.openTopic(topic.id);
+    const w = (await repo.read()).topics[0]!.windowId!;
+    expect((await browser.listGroups(w)).map((g) => g.title)).toEqual(['G']);
+  });
+
   it('ungroupSection keeps the tabs', async () => {
     const { browser, service, repo } = setup();
     const { windowId } = browser.open(['https://a/']);
@@ -136,6 +173,22 @@ describe('moveTab', () => {
         'https://a2/',
       ]);
     }
+  });
+
+  it('leaves everything in place when the target window refuses the tab', async () => {
+    const { service, repo, ta, tb, moving, browser } = await two(false, true);
+    browser.failUrls.add(moving.url);
+    const realCreate = browser.createTab.bind(browser);
+    browser.createTab = async (w, t) => {
+      if (browser.failUrls.has(t.url)) throw new Error('refused');
+      return realCreate(w, t);
+    };
+    await expect(service.moveTab(ta.id, moving.id, tb.id)).rejects.toThrow('refused');
+    await service.syncAll();
+    expect(await urls(repo)).toEqual([
+      [['https://a1/', 'https://a2/'], 0],
+      [['https://b1/'], 0],
+    ]);
   });
 
   it('rejects moving to the same topic or an unknown tab', async () => {
