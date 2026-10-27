@@ -19,7 +19,7 @@ test('auto-park with an injected clock: dry run, park, restore every tab', async
     name: 'Work',
     windowId: topicWin.windowId,
   });
-  const loose = await openWindow(ext, [{ url: site.url('loose-a') }, { url: site.url('loose-b') }]);
+  await openWindow(ext, [{ url: site.url('loose-a') }, { url: site.url('loose-b') }]);
   const at = Date.now() + 15 * DAY;
   const count = () => ext.evaluate(async () => (await chrome.tabs.query({})).length);
   const before = await count();
@@ -43,11 +43,11 @@ test('auto-park with an injected clock: dry run, park, restore every tab', async
   expect(store.unsortedParked.map((t) => t.url)).toEqual([site.url('loose-b')]);
 
   expect(await send(ext, { type: 'restoreAllParked', topicId: saved.data!.topicId })).toMatchObject(
-    { ok: true, data: { restored: 1 } },
+    { ok: true, data: { restored: 1, failed: 0 } },
   );
   expect(await send(ext, { type: 'restoreAllParked', topicId: null })).toMatchObject({
     ok: true,
-    data: { restored: 1 },
+    data: { restored: 1, failed: 0 },
   });
   await expect.poll(count).toBe(before);
   store = await readStore<Store>(ext);
@@ -57,5 +57,4 @@ test('auto-park with an injected clock: dry run, park, restore every tab', async
     (await chrome.tabs.query({})).map((t) => t.url || t.pendingUrl),
   );
   expect(urls).toEqual(expect.arrayContaining([site.url('idle'), site.url('loose-b')]));
-  void loose;
 });

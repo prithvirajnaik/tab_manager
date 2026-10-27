@@ -77,8 +77,11 @@ describe('autoPark', () => {
   it('restore returns every parked tab', async () => {
     const { service, repo, browser, topic, topicWin } = await scene();
     await service.autoPark();
-    expect(await service.restoreAllParked(topic.id)).toEqual({ restored: 1 });
-    expect(await service.restoreAllParked(null, topicWin.windowId)).toEqual({ restored: 1 });
+    expect(await service.restoreAllParked(topic.id)).toEqual({ restored: 1, failed: 0 });
+    expect(await service.restoreAllParked(null, topicWin.windowId)).toEqual({
+      restored: 1,
+      failed: 0,
+    });
     const s = await repo.read();
     expect(s.topics[0]!.parked).toEqual([]);
     expect(s.unsortedParked).toEqual([]);
@@ -86,7 +89,79 @@ describe('autoPark', () => {
     expect(urls).toEqual(expect.arrayContaining(['https://idle/', 'https://loose-idle/']));
     await service.syncAll();
     expect((await repo.read()).topics[0]!.tabs.map((t) => t.url)).toContain('https://idle/');
-    expect(await service.restoreAllParked(null)).toEqual({ restored: 0 });
+    expect(await service.restoreAllParked(null)).toEqual({ restored: 0, failed: 0 });
+  });
+
+  it('keeps tabs the browser refuses to reopen in Parked', async () => {
+    const { service, repo, browser, topicWin, now } = await scene();
+    await service.autoPark();
+    await repo.update((s) => {
+      s.unsortedParked.push({
+        id: 'file',
+        url: 'file:///c:/notes.txt',
+        title: 'Notes',
+        pinned: false,
+        lastActiveAt: 1,
+        parkedAt: now(),
+      });
+      return s;
+    });
+    browser.failUrls.add('file:///c:/notes.txt');
+    const realCreate = browser.createTab.bind(browser);
+    browser.createTab = async (w, t) => {
+      if (browser.failUrls.has(t.url)) throw new Error('refused');
+      return realCreate(w, t);
+    };
+    expect(await service.restoreAllParked(null, topicWin.windowId)).toEqual({
+      restored: 1,
+      failed: 1,
+    });
+    expect((await repo.read()).unsortedParked.map((t) => t.url)).toEqual(['file:///c:/notes.txt']);
+    // Into a new window as well.
+    expect(await service.restoreAllParked(null)).toEqual({ restored: 0, failed: 1 });
+    expect((await repo.read()).unsortedParked).toHaveLength(1);
+    await expect(service.restoreUnsorted('file')).rejects.toThrow(/could not open/);
+  });
+
+  it('a partly failed restore into an open topic links what opened, so nothing duplicates', async () => {
+    const { service, repo, browser, topic } = await scene();
+    await service.autoPark();
+    await repo.update((s) => {
+      s.topics[0]!.parked.push({
+        id: 'bad',
+        url: 'file:///x',
+        title: 'X',
+        pinned: false,
+        lastActiveAt: 1,
+        parkedAt: 1,
+      });
+      return s;
+    });
+    const realCreate = browser.createTab.bind(browser);
+    browser.createTab = async (w, t) => {
+      if (t.url === 'file:///x') throw new Error('refused');
+      return realCreate(w, t);
+    };
+    expect(await service.restoreAllParked(topic.id)).toEqual({ restored: 1, failed: 1 });
+    await service.syncAll();
+    const t = (await repo.read()).topics[0]!;
+    expect(t.parked.map((x) => x.id)).toEqual(['bad']);
+    const ids = [...t.tabs, ...t.recentlyClosed].map((x) => x.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(t.tabs.filter((x) => x.url === 'https://idle/')).toHaveLength(1);
+  });
+
+  it('does not auto-park while a topic still waits for its restored window', async () => {
+    const { service, browser, session, topicWin } = await scene();
+    // A restart where the topic's window has not been restored yet.
+    browser.closeWindow(topicWin.windowId);
+    const before = (await browser.listTabs()).length;
+    session.data = {};
+    const result = await service.autoPark();
+    expect(result.tabs).toEqual([]);
+    expect((await browser.listTabs()).length).toBe(before);
+    // A preview still works.
+    expect((await service.autoPark({ dryRun: true })).tabs.length).toBeGreaterThan(0);
   });
 
   it('restores parked tabs into a closed topic without opening it', async () => {

@@ -97,3 +97,8 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **The `autoPark` command accepts a clock override (`at`)** so the end-to-end test can simulate 15 days passing; commands are accepted only from this extension's own pages.
 - **Parked tabs never expire.** Restore brings back one tab or all of them; into the topic's window if it is open, otherwise into the saved topic (or, for unsorted tabs, into the current window or a new one).
 - **No discarding right after a topic opens.** Discarding a tab before its first navigation commits can blank it, and the next sync would then file it as closed (seen in the e2e run). Instead the maintenance alarm discards background tabs in topic windows that have been idle for an hour.
+- **Restores open tabs one by one**; a tab the browser refuses stays parked and is reported as failed. Tabs that did open are linked before anything else, so a partial restore never duplicates.
+- **No auto-park while a topic waits for its restored window** (the post-restart relink), so a restored topic window's tabs are never misfiled as having no topic. Previews still work.
+- **Parking closes tabs one at a time** and skips any tab the user activated meanwhile.
+- **Auto-park snapshots at most once a day** (or for 10 or more tabs at once), so a trickle of parking does not rotate useful snapshots out of the ten-slot ring.
+- **Search also covers the unsorted Parked list**, with Restore from the result.

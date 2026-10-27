@@ -232,6 +232,7 @@ export function App({ initial, api, now = Date.now }: Props) {
           onOpenTopic={actions.open}
           onMove={actions.move}
           onRestore={actions.restore}
+          onRestoreUnsorted={parking.restore}
         />
       ) : topics.length === 0 ? (
         <section class="empty">
@@ -260,7 +261,6 @@ export function App({ initial, api, now = Date.now }: Props) {
 
       {!query.trim() && (
         <ParkingPanel
-          key={load.store.settings.autoParkDays}
           settings={load.store.settings}
           unsorted={load.store.unsortedParked}
           busy={busy}

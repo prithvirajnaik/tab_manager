@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { ParkCandidate } from '../core/commands';
 import type { AutoParkMode, ParkedTab, Settings } from '../core/model';
 import { hostOf, timeAgo } from './format';
@@ -24,6 +24,7 @@ const MODES: { value: AutoParkMode; label: string }[] = [
 export function ParkingPanel(props: Props) {
   const { settings, unsorted, busy, now, onSettings, onPreview, onRestore, onRestoreAll } = props;
   const [days, setDays] = useState(String(settings.autoParkDays));
+  useEffect(() => setDays(String(settings.autoParkDays)), [settings.autoParkDays]);
   const [preview, setPreview] = useState<ParkCandidate[] | null>(null);
 
   return (
@@ -53,6 +54,7 @@ export function ParkingPanel(props: Props) {
         <input
           id="park-days"
           type="number"
+          aria-label="Days idle before parking"
           min={1}
           max={365}
           value={days}

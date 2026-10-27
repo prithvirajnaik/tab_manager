@@ -189,13 +189,37 @@ export function createService(deps: ServiceDeps) {
   }
 
   /** Opens parked tabs in a window (or a new one). Must run inside the queue. */
-  async function openParked(entries: ParkedTab[], windowId?: number): Promise<void> {
-    const open = windowId !== undefined && (await browser.listWindowIds()).includes(windowId);
+  /**
+   * Opens parked tabs in a window (or a new one), one by one. Returns saved id -> new tab id
+   * for each tab that opened; a tab the browser refuses stays parked.
+   */
+  async function openParked(
+    entries: ParkedTab[],
+    windowId?: number | null,
+  ): Promise<Map<string, number>> {
+    const opened = new Map<string, number>();
+    const open =
+      windowId !== undefined &&
+      windowId !== null &&
+      (await browser.listWindowIds()).includes(windowId);
     if (open) {
-      for (const t of entries) await browser.createTab(windowId, { url: t.url, pinned: t.pinned });
-    } else {
-      await browser.createWindow(entries.map((t) => ({ url: t.url, pinned: t.pinned })));
+      for (const t of entries) {
+        try {
+          opened.set(t.id, await browser.createTab(windowId, { url: t.url, pinned: t.pinned }));
+        } catch {
+          // Left parked; reported as not restored.
+        }
+      }
+      return opened;
     }
+    const { tabIds } = await browser.createWindow(
+      entries.map((t) => ({ url: t.url, pinned: t.pinned })),
+    );
+    entries.forEach((t, i) => {
+      const id = tabIds[i];
+      if (id !== undefined && id >= 0) opened.set(t.id, id);
+    });
+    return opened;
   }
 
   async function autoParkInQueue(options: {
@@ -208,6 +232,13 @@ export function createService(deps: ServiceDeps) {
     if (mode === 'off' && options.dryRun === undefined) return { dryRun: true, tabs: [] };
     await syncLinked();
     const links = await linkStore.read();
+    // Right after a restart, a restored topic window may not be relinked yet; its tabs would
+    // be misfiled as having no topic. Wait while any topic still waits for its window.
+    const linkedTopics = new Set(Object.values(links.windows));
+    const awaitingRelink = (await repo.read()).topics.some(
+      (t) => t.windowId !== null && !linkedTopics.has(t.id),
+    );
+    if (!links.relinkDone && awaitingRelink && !dryRun) return { dryRun, tabs: [] };
     const at = options.at ?? now();
     const fresh = await repo.read();
     const savedById = new Map<string, { topic: Topic; tab: SavedTab }>();
@@ -249,16 +280,25 @@ export function createService(deps: ServiceDeps) {
     }));
     if (dryRun || plan.length === 0) return { dryRun, tabs };
 
+    const [latest] = await repo.snapshots();
+    const snapshot = !latest || at - latest.at > 86_400_000 || plan.length >= 10;
     await repo.update(
       (s) => {
         for (const p of plan) {
           if (p.topicId !== null && p.saved) {
             const topic = s.topics.find((x) => x.id === p.topicId);
             const tab = topic?.tabs.find((x) => x.id === p.saved?.id);
-            if (!topic || !tab) continue;
-            topic.tabs = topic.tabs.filter((x) => x.id !== tab.id);
-            topic.parked = [{ ...tab, parkedAt: at }, ...topic.parked];
-            topic.updatedAt = at;
+            if (topic && tab) {
+              topic.tabs = topic.tabs.filter((x) => x.id !== tab.id);
+              topic.parked = [{ ...tab, parkedAt: at }, ...topic.parked];
+              topic.updatedAt = at;
+              continue;
+            }
+            // The tab is about to be closed, so it must be saved somewhere.
+            s.unsortedParked = [
+              { ...toSavedTab(p.live, newId(), at), parkedAt: at },
+              ...s.unsortedParked,
+            ];
           } else {
             s.unsortedParked = [
               { ...toSavedTab(p.live, newId(), at), parkedAt: at },
@@ -268,12 +308,18 @@ export function createService(deps: ServiceDeps) {
         }
         return s;
       },
-      { snapshot: true },
+      { snapshot },
     );
     const tabLinks = { ...links.tabs };
     for (const p of plan) delete tabLinks[String(p.live.id)];
     await linkStore.write({ ...links, tabs: tabLinks });
-    await browser.removeTabs(plan.map((p) => p.live.id));
+    // Close one by one; a tab the user activated meanwhile is kept open (and stays parked
+    // too, which is harmless: restoring it later only opens a duplicate).
+    const nowActive = new Set((await browser.listTabs()).filter((t) => t.active).map((t) => t.id));
+    for (const p of plan) {
+      if (nowActive.has(p.live.id)) continue;
+      await browser.removeTabs([p.live.id]).catch(() => undefined);
+    }
     return { dryRun: false, tabs };
   }
 
@@ -849,7 +895,8 @@ export function createService(deps: ServiceDeps) {
         const store = await repo.read();
         const entry = store.unsortedParked.find((t) => t.id === savedTabId);
         if (!entry) throw new UserError('Tab not found.');
-        await openParked([entry], windowId);
+        const opened = await openParked([entry], windowId);
+        if (!opened.has(entry.id)) throw new UserError('The browser could not open that tab.');
         await repo.update((s) => {
           s.unsortedParked = s.unsortedParked.filter((t) => t.id !== savedTabId);
           return s;
@@ -858,34 +905,40 @@ export function createService(deps: ServiceDeps) {
     },
 
     /** Brings back every parked tab of a topic, or of the unsorted list when topicId is null. */
-    restoreAllParked(topicId: string | null, windowId?: number): Promise<{ restored: number }> {
+    /**
+     * Brings back every parked tab of a topic, or of the unsorted list when topicId is null.
+     * Tabs the browser refuses to open stay parked and are counted as failed.
+     */
+    restoreAllParked(
+      topicId: string | null,
+      windowId?: number,
+    ): Promise<{ restored: number; failed: number }> {
       return run(async () => {
         const store = await repo.read();
         if (topicId === null) {
           const entries = store.unsortedParked;
-          if (entries.length === 0) return { restored: 0 };
-          await openParked(entries, windowId);
-          const ids = new Set(entries.map((t) => t.id));
+          if (entries.length === 0) return { restored: 0, failed: 0 };
+          const opened = await openParked(entries, windowId);
           await repo.update((s) => {
-            s.unsortedParked = s.unsortedParked.filter((t) => !ids.has(t.id));
+            s.unsortedParked = s.unsortedParked.filter((t) => !opened.has(t.id));
             return s;
           });
-          return { restored: entries.length };
+          return { restored: opened.size, failed: entries.length - opened.size };
         }
         const topic = findTopic(store, topicId);
         const entries = topic.parked;
-        if (entries.length === 0) return { restored: 0 };
+        if (entries.length === 0) return { restored: 0, failed: 0 };
         const links = await linkStore.read();
         const open = await liveWindowFor(links, topicId);
-        const tabLinks: Record<string, string> = {};
+        let ids = new Set(entries.map((t) => t.id));
         if (open !== null) {
-          for (const t of entries) {
-            const tabId = await browser.createTab(open, { url: t.url, pinned: t.pinned });
-            tabLinks[String(tabId)] = t.id;
-          }
+          const opened = await openParked(entries, open);
+          const tabLinks: Record<string, string> = {};
+          for (const [savedId, tabId] of opened) tabLinks[String(tabId)] = savedId;
+          // Link what opened before anything else, so the next sync adopts them by id.
           await linkStore.write({ ...links, tabs: { ...links.tabs, ...tabLinks } });
+          ids = new Set(opened.keys());
         }
-        const ids = new Set(entries.map((t) => t.id));
         const at = now();
         await repo.update((s) => {
           const t = findTopic(s, topicId);
@@ -895,7 +948,7 @@ export function createService(deps: ServiceDeps) {
           t.updatedAt = at;
           return s;
         });
-        return { restored: entries.length };
+        return { restored: ids.size, failed: entries.length - ids.size };
       });
     },
 
