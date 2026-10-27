@@ -27,11 +27,16 @@ export function parseImport(text: string): ImportResult {
   if (envelope.format !== EXPORT_FORMAT) {
     return { ok: false, error: 'The file is not a Tab Topics export.' };
   }
-  if (envelope.store === undefined || envelope.store === null) {
+  const data = envelope.store;
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return { ok: false, error: 'The export has no data.' };
   }
+  // Exports always carry a version; an unversioned object is not a real export.
+  if (!Number.isInteger((data as { schemaVersion?: unknown }).schemaVersion)) {
+    return { ok: false, error: 'The export has no schema version.' };
+  }
   try {
-    const store = migrate(envelope.store);
+    const store = migrate(data);
     for (const t of store.topics) t.windowId = null;
     for (const e of store.trash) e.topic.windowId = null;
     return { ok: true, store };

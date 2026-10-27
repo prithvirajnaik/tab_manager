@@ -95,13 +95,55 @@ describe('repo', () => {
     expect(kv.data[STORE_KEY]).toEqual(corrupt);
   });
 
-  it('resets unreadable data only after copying it to a backup key', async () => {
-    const corrupt = { topics: 'garbage' };
+  it('resets unreadable data only after copying it to a unique backup key', async () => {
+    const corrupt = { schemaVersion: CURRENT_SCHEMA_VERSION, topics: 'garbage' };
     const kv = memoryKv({ [STORE_KEY]: corrupt });
-    const repo = createRepo(kv, clock(77));
+    const repo = createRepo(kv, () => 77);
+    await expect(repo.read()).rejects.toBeInstanceOf(StoreUnreadableError);
     const backupKey = await repo.resetKeepingBackup();
     expect(kv.data[backupKey]).toEqual(corrupt);
     expect(await repo.read()).toEqual(emptyStore());
+    const second = await repo.resetKeepingBackup();
+    expect(second).not.toBe(backupKey);
+    expect(kv.data[backupKey]).toEqual(corrupt);
+  });
+
+  it('keeps the queue working and writes nothing when an update throws', async () => {
+    const kv = memoryKv();
+    const repo = createRepo(kv, clock());
+    await expect(
+      repo.update(() => {
+        throw new Error('bug');
+      }),
+    ).rejects.toThrow('bug');
+    expect(kv.writes).toBe(0);
+    await repo.update((s) => {
+      s.topics.push(topic());
+      return s;
+    });
+    expect((await repo.read()).topics).toHaveLength(1);
+  });
+
+  it('skips the write when an update changes nothing', async () => {
+    const kv = memoryKv({ [STORE_KEY]: store() });
+    const repo = createRepo(kv, clock());
+    await repo.update((s) => s);
+    expect(kv.writes).toBe(0);
+  });
+
+  it('clears window links on restored topics', async () => {
+    const kv = memoryKv({ [STORE_KEY]: store({ topics: [topic({ windowId: 5 })] }) });
+    const repo = createRepo(kv, clock());
+    await repo.update((s) => ({ ...s, topics: [] }), { snapshot: true });
+    const [snap] = await repo.snapshots();
+    await repo.restoreSnapshot(snap!.at);
+    expect((await repo.read()).topics[0]?.windowId).toBeNull();
+  });
+
+  it('refuses to restore a snapshot over unreadable data', async () => {
+    const kv = memoryKv({ [STORE_KEY]: { schemaVersion: 1, topics: 1 } });
+    const repo = createRepo(kv, clock());
+    await expect(repo.restoreSnapshot(1)).rejects.toThrow();
   });
 
   it('writes a migrated store back once and keeps the pre-migration data', async () => {
@@ -114,13 +156,41 @@ describe('repo', () => {
     expect((kv.data[STORE_KEY] as { schemaVersion: number }).schemaVersion).toBe(
       CURRENT_SCHEMA_VERSION,
     );
-    expect(kv.data['store-backup-v0']).toEqual(legacy);
+    const backups = Object.keys(kv.data).filter((k) => k.startsWith('store-backup-v0-'));
+    expect(backups).toHaveLength(1);
+    expect(kv.data[backups[0]!]).toEqual(legacy);
   });
 
-  it('ignores a corrupt snapshot list rather than failing writes', async () => {
+  it('never overwrites an earlier migration backup', async () => {
+    const kv = memoryKv({ [STORE_KEY]: { topics: [] }, 'store-backup-v0-1000': 'older' });
+    const repo = createRepo(kv, () => 1000);
+    await repo.update((x) => x);
+    expect(kv.data['store-backup-v0-1000']).toBe('older');
+    expect(Object.keys(kv.data).filter((k) => k.startsWith('store-backup-v0-'))).toHaveLength(2);
+  });
+
+  it('moves unreadable snapshots to a backup key instead of dropping them', async () => {
     const kv = memoryKv({ [SNAPSHOTS_KEY]: 'nope' });
-    const repo = createRepo(kv, clock());
+    const repo = createRepo(kv, clock(300));
     await repo.update((s) => s, { snapshot: true });
     expect(await repo.snapshots()).toHaveLength(1);
+    const backups = Object.entries(kv.data).filter(([k]) => k.startsWith('snapshots-unreadable-'));
+    expect(backups.map(([, v]) => v)).toEqual(['nope']);
+  });
+
+  it('keeps readable snapshots and migrates legacy ones when entries are mixed', async () => {
+    const good = { at: 5, topics: [topic({ name: 'good' })] };
+    const legacy = { at: 4, topics: [{ id: 'l', name: 'legacy', tabs: [] }] };
+    const bad = { at: 3, topics: 'x' };
+    const kv = memoryKv({ [SNAPSHOTS_KEY]: { schemaVersion: 0, items: [good, legacy, bad] } });
+    const repo = createRepo(kv, clock(900));
+    const snaps = await repo.snapshots();
+    expect(snaps.map((s) => s.topics[0]?.name ?? '-')).toEqual(['good', 'legacy']);
+    await repo.update((s) => s, { snapshot: true });
+    expect((await repo.snapshots()).map((s) => s.at)).toEqual([900, 5, 4]);
+    const stored = kv.data[SNAPSHOTS_KEY] as { schemaVersion: number };
+    expect(stored.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    const backups = Object.entries(kv.data).filter(([k]) => k.startsWith('snapshots-unreadable-'));
+    expect(backups.map(([, v]) => v)).toEqual([[bad]]);
   });
 });

@@ -5,21 +5,44 @@ export const DEFAULT_AUTO_PARK_DAYS = 14;
 export const RECENTLY_CLOSED_DAYS = 30;
 export const TRASH_DAYS = 30;
 
-const BLOCKED_SCHEMES = /^\s*(javascript|data|vbscript):/i;
+export const MAX_URL_LENGTH = 8192;
+export const MAX_TITLE_LENGTH = 4096;
+
+const ALLOWED_PROTOCOLS = new Set([
+  'http:',
+  'https:',
+  'file:',
+  'ftp:',
+  'chrome:',
+  'brave:',
+  'edge:',
+  'about:',
+  'chrome-extension:',
+  'view-source:',
+]);
+
+/**
+ * Allowlist check on the protocol as the URL parser sees it, so disguises such as
+ * "\u0001javascript:" or "java\tscript:" are caught.
+ */
+export function isOpenableUrl(url: string): boolean {
+  if (url.length === 0 || url.length > MAX_URL_LENGTH) return false;
+  try {
+    return ALLOWED_PROTOCOLS.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
 
 // Titles and URLs come from web pages and imported files; they are validated here and
 // rendered only as text, never as HTML.
-const Url = z
-  .string()
-  .min(1)
-  .max(8192)
-  .refine((u) => !BLOCKED_SCHEMES.test(u), 'URL scheme is not allowed');
+const Url = z.string().refine(isOpenableUrl, 'URL is not allowed');
 
 export const SavedTabSchema = z.object({
   id: z.string().min(1),
   url: Url,
-  title: z.string().max(4096),
-  favIconUrl: z.string().max(8192).optional(),
+  title: z.string().max(MAX_TITLE_LENGTH),
+  favIconUrl: z.string().max(MAX_URL_LENGTH).optional(),
   pinned: z.boolean(),
   sectionId: z.string().optional(),
   lastActiveAt: z.number(),
@@ -110,8 +133,4 @@ export function emptyStore(): Store {
     settings: defaultSettings(),
     trash: [],
   };
-}
-
-export function isOpenableUrl(url: string): boolean {
-  return !BLOCKED_SCHEMES.test(url);
 }

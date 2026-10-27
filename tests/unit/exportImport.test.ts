@@ -58,6 +58,23 @@ describe('export and import', () => {
         },
       }),
     ],
+    ...['javascript:alert(1)', 'java	script:alert(1)', ' JAVASCRIPT:x', 'data:text/html,x'].map(
+      (url) => [
+        `a disguised script url ${JSON.stringify(url)}`,
+        JSON.stringify({
+          format: EXPORT_FORMAT,
+          store: { ...store(), topics: [topic({ tabs: [savedTab({ url })] })] },
+        }),
+      ],
+    ),
+    [
+      'a store without a schema version',
+      JSON.stringify({ format: EXPORT_FORMAT, store: { hello: 1 } }),
+    ],
+    [
+      'a legacy store with a field of the wrong type',
+      JSON.stringify({ format: EXPORT_FORMAT, store: { schemaVersion: 0, topics: 'garbage' } }),
+    ],
     [
       'duplicate topic ids',
       JSON.stringify({

@@ -40,6 +40,29 @@ describe('migrate', () => {
     expect(t?.tabs[0]).toMatchObject({ url: 'https://jisho.org/', pinned: true, lastActiveAt: 5 });
   });
 
+  it('rejects legacy data whose fields have the wrong type instead of defaulting them', () => {
+    expect(() => migrate({ topics: 'garbage' })).toThrow(MigrationError);
+    expect(() => migrate({ topics: [{ id: 'a', name: 'A', tabs: 'x' }] })).toThrow(MigrationError);
+    expect(() => migrate({ topics: [], settings: 3 })).toThrow(MigrationError);
+  });
+
+  it('drops a stale window id from legacy data', () => {
+    const result = migrate({ topics: [{ id: 'a', name: 'A', tabs: [], windowId: 12 }] });
+    expect(result.topics[0]?.windowId).toBeNull();
+  });
+
+  it.each([
+    'https://a/',
+    'http://a/',
+    'file:///c:/x',
+    'chrome://settings/',
+    'brave://rewards/',
+    'about:config',
+  ])('accepts %s as a tab url', (url) => {
+    const s = store({ topics: [topic({ tabs: [savedTab({ url })] })] });
+    expect(migrate(s).topics[0]?.tabs[0]?.url).toBe(url);
+  });
+
   it('refuses data from a newer schema instead of discarding it', () => {
     expect(() => migrate({ ...emptyStore(), schemaVersion: CURRENT_SCHEMA_VERSION + 1 })).toThrow(
       MigrationError,
