@@ -22,6 +22,10 @@ export default tseslint.config(
     },
   },
   {
+    files: ['tests/**/*.{ts,tsx}', 'e2e/**/*.ts'],
+    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+  },
+  {
     files: ['src/**/*.{ts,tsx}'],
     rules: {
       // Untrusted titles and URLs must never be inserted as HTML.
