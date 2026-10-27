@@ -44,7 +44,12 @@ export default tseslint.config(
         },
         {
           selector:
-            'CallExpression[callee.property.name=/^(insertAdjacentHTML|write|writeln|createContextualFragment)$/]',
+            'CallExpression[callee.property.name=/^(insertAdjacentHTML|createContextualFragment)$/]',
+          message: 'No raw HTML.',
+        },
+        {
+          selector:
+            "CallExpression[callee.object.name='document'][callee.property.name=/^write(ln)?$/]",
           message: 'No raw HTML.',
         },
       ],
