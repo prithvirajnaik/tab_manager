@@ -17,6 +17,8 @@ export function reconcileSections(
   groups: LiveGroup[],
   groupLinks: Record<string, string>,
   newId: () => string,
+  /** Keep sections whose group is not (yet) in the window, as when merging after a restart. */
+  keepUnmatched = false,
 ): SectionResult {
   const own = new Map(topic.sections.map((s) => [s.id, s]));
   const used = new Set<string>();
@@ -42,5 +44,6 @@ export function reconcileSections(
   // Restore tab-strip order (pass 2 appended).
   const order = new Map(groups.map((g, i) => [links[String(g.id)], i]));
   sections.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  if (keepUnmatched) sections.push(...topic.sections.filter((s) => !used.has(s.id)));
   return { sections, groupLinks: links };
 }

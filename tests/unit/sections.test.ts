@@ -45,6 +45,14 @@ describe('reconcileSections', () => {
     expect(r.sections[0]!.id).not.toBe('other-topic-section');
   });
 
+  it('keeps unmatched sections when asked (a window still being restored)', () => {
+    const t = topic({ sections: [{ id: 's1', name: 'Later' }] });
+    expect(reconcileSections(t, [], {}, newId, true).sections).toEqual([
+      { id: 's1', name: 'Later' },
+    ]);
+    expect(reconcileSections(t, [], {}, newId).sections).toEqual([]);
+  });
+
   it('keeps an unnamed group as a section with an empty name', () => {
     const r = reconcileSections(topic(), [group(1, '')], {}, newId);
     expect(r.sections[0]!.name).toBe('');

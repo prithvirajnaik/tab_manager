@@ -119,8 +119,8 @@ describe('live link', () => {
     expect(t.windowId).toBe(back.windowId);
   });
 
-  it('relink needs a strong URL match, and its first sync closes nothing', async () => {
-    const { browser, service, repo, session } = setup();
+  it('relink needs a strong URL match, and closes nothing during the grace period', async () => {
+    const { browser, service, repo, session, advance } = setup();
     const { windowId } = browser.open(['https://a1/', 'https://a2/', 'https://a3/']);
     const topic = await service.saveWindow(windowId, 'A');
     browser.closeWindow(windowId);
@@ -137,10 +137,22 @@ describe('live link', () => {
     // Two of three restored: a match, and the missing tab is kept, not closed.
     const partial = browser.open(['https://a1/', 'https://a2/']);
     await service.syncAll();
-    const t = (await repo.read()).topics.find((x) => x.id === topic.id)!;
+    let t = (await repo.read()).topics.find((x) => x.id === topic.id)!;
     expect(t.windowId).toBe(partial.windowId);
     expect(t.tabs.map((x) => x.url).sort()).toEqual(['https://a1/', 'https://a2/', 'https://a3/']);
     expect(t.recentlyClosed).toEqual([]);
+    // Later events during the grace period still close nothing.
+    browser.addTab(partial.windowId, { url: 'https://a4/' });
+    await service.syncAll();
+    t = (await repo.read()).topics.find((x) => x.id === topic.id)!;
+    expect(t.recentlyClosed).toEqual([]);
+    expect(t.tabs.map((x) => x.url)).toContain('https://a3/');
+    // After it, the window is followed normally: the tab that never came back is closed.
+    advance(RELINK_GRACE_MS + 1);
+    await service.syncAll();
+    await service.syncAll();
+    t = (await repo.read()).topics.find((x) => x.id === topic.id)!;
+    expect(t.recentlyClosed.map((x) => x.url)).toEqual(['https://a3/']);
   });
 
   it('detachWindow unlinks a topic and leaves its window open', async () => {
@@ -154,6 +166,22 @@ describe('live link', () => {
     browser.addTab(windowId, { url: 'https://b/' });
     await service.syncAll();
     expect((await repo.read()).topics[0]!.tabs.map((x) => x.url)).toEqual(['https://a/']);
+  });
+
+  it('a tab dragged out of a detached window does not leave the dormant topic', async () => {
+    const { browser, service, repo } = setup();
+    const a = browser.open(['https://a1/', 'https://a2/']);
+    const b = browser.open(['https://b1/']);
+    const ta = await service.saveWindow(a.windowId, 'A');
+    await service.saveWindow(b.windowId, 'B');
+    await service.detachWindow(ta.id);
+    browser.move(a.tabIds[1]!, b.windowId, -1);
+    await service.syncAll();
+    const topics = (await repo.read()).topics;
+    expect(topics[0]!.tabs.map((x) => x.url)).toEqual(['https://a1/', 'https://a2/']);
+    expect(topics[1]!.tabs.map((x) => x.url)).toEqual(['https://b1/', 'https://a2/']);
+    const ids = topics.flatMap((t) => t.tabs.map((x) => x.id));
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('a tab dragged through a temporary window keeps its id and is not duplicated', async () => {

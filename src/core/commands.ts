@@ -63,8 +63,8 @@ export function createService(deps: ServiceDeps) {
    * and reload). Topics that were open are matched to open, unlinked windows by URL
    * similarity. Browsers may restore windows after the extension starts, so matching is
    * retried for RELINK_GRACE_MS; after that, topics still unmatched are marked closed, keeping
-   * every tab. A snapshot is taken first. A relinked window's first sync adds tabs but closes
-   * none, so a wrong or partial match can never empty a topic.
+   * every tab. A snapshot is taken first. Until the grace period ends, syncs of a relinked
+   * window add tabs but close none, so a wrong or partial match cannot empty a topic.
    */
   async function relinkRestoredWindows(): Promise<void> {
     let links = await linkStore.read();
@@ -91,7 +91,7 @@ export function createService(deps: ServiceDeps) {
           return x;
         });
       }
-      await linkStore.write({ ...links, relinkDone: true });
+      await linkStore.write({ ...links, relinkDone: true, merging: [] });
       return;
     }
     if (stale.length === 0) return;
@@ -176,7 +176,6 @@ export function createService(deps: ServiceDeps) {
     // Nothing open at all: most likely the browser is quitting. Leave topics marked open so
     // the next start can relink them to the restored windows.
     const quitting = openWindows.size === 0;
-    const reconciled = new Set<number>();
 
     await repo.update((store) => {
       const topicIds = new Set(store.topics.map((t) => t.id));
@@ -229,7 +228,6 @@ export function createService(deps: ServiceDeps) {
           continue;
         }
         if (!reconciling(windowId, topicId)) continue;
-        reconciled.add(windowId);
         const elsewhere = new Set<string>();
         for (const [savedId, adopter] of adoptedIn) {
           if (adopter !== windowId) elsewhere.add(savedId);
@@ -243,7 +241,8 @@ export function createService(deps: ServiceDeps) {
         const windowGroups = (groupsByWindow.get(windowId) ?? [])
           .filter((g) => firstIndex.has(g.id))
           .sort((a, b) => (firstIndex.get(a.id) ?? 0) - (firstIndex.get(b.id) ?? 0));
-        const sections = reconcileSections(topic, windowGroups, links.groups, newId);
+        const merging = links.merging.includes(windowId);
+        const sections = reconcileSections(topic, windowGroups, links.groups, newId, merging);
         Object.assign(nextLinks.groups, sections.groupLinks);
         const result = reconcileTopic(topic, windowTabs, {
           now: at,
@@ -253,7 +252,7 @@ export function createService(deps: ServiceDeps) {
           elsewhere,
           foreign,
           sectionForGroup: (groupId) => sections.groupLinks[String(groupId)],
-          keepMissing: links.merging.includes(windowId),
+          keepMissing: merging,
         });
         Object.assign(nextLinks.tabs, result.tabLinks);
         for (const id of result.adopted) adoptedBy.set(id, topicId);
@@ -300,8 +299,8 @@ export function createService(deps: ServiceDeps) {
         nextLinks.groups[g] = sectionId;
       }
     }
-    // Merging lasts until the window's first reconcile.
-    nextLinks.merging = links.merging.filter((w) => openWindows.has(w) && !reconciled.has(w));
+    // Relinked windows merge (close nothing) for the whole relink grace period.
+    nextLinks.merging = links.relinkDone ? [] : links.merging.filter((w) => openWindows.has(w));
     await linkStore.write(nextLinks);
   }
 
@@ -505,7 +504,11 @@ export function createService(deps: ServiceDeps) {
           findTopic(s, topicId).windowId = null;
           return s;
         });
-        if (windowId !== null) await linkStore.write(unbindWindow(links, windowId));
+        if (windowId !== null) {
+          // Drop its tab links too, so its tabs are no longer recognised as this topic's.
+          const tabIds = (await browser.listTabs(windowId)).map((t) => t.id);
+          await linkStore.write(unbindWindow(links, windowId, tabIds));
+        }
       });
     },
 
