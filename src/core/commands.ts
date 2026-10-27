@@ -7,7 +7,16 @@ import {
   type LinkStore,
   type Links,
 } from './links';
-import { TRASH_DAYS, isOpenableUrl, type SavedTab, type Store, type Topic } from './model';
+import { selectIdleTabs } from './autopark';
+import {
+  TRASH_DAYS,
+  isOpenableUrl,
+  type AutoParkMode,
+  type ParkedTab,
+  type SavedTab,
+  type Store,
+  type Topic,
+} from './model';
 import type { BrowserPort, Clock, LiveGroup, LiveTab } from './ports';
 import { createWriteQueue } from './queue';
 import { reconcileTopic, revertCloses } from './reconcile';
@@ -37,6 +46,18 @@ export type ServiceDeps = {
 export const RELINK_GRACE_MS = 2 * 60_000;
 
 export type RestoreSource = 'recentlyClosed' | 'parked';
+
+/** Background tabs in topic windows idle this long are discarded to free memory. */
+export const DISCARD_AFTER_MS = 60 * 60_000;
+
+export type ParkCandidate = {
+  topicId: string | null;
+  topicName: string | null;
+  url: string;
+  title: string;
+};
+
+export type AutoParkResult = { dryRun: boolean; tabs: ParkCandidate[] };
 
 export type Service = ReturnType<typeof createService>;
 
@@ -159,6 +180,119 @@ export function createService(deps: ServiceDeps) {
         : reverted;
     }
     return store;
+  }
+
+  function unpark(p: ParkedTab, at: number): SavedTab {
+    const tab: SavedTab & { parkedAt?: number } = { ...p, lastActiveAt: at };
+    delete tab.parkedAt;
+    return tab;
+  }
+
+  /** Opens parked tabs in a window (or a new one). Must run inside the queue. */
+  async function openParked(entries: ParkedTab[], windowId?: number): Promise<void> {
+    const open = windowId !== undefined && (await browser.listWindowIds()).includes(windowId);
+    if (open) {
+      for (const t of entries) await browser.createTab(windowId, { url: t.url, pinned: t.pinned });
+    } else {
+      await browser.createWindow(entries.map((t) => ({ url: t.url, pinned: t.pinned })));
+    }
+  }
+
+  async function autoParkInQueue(options: {
+    dryRun?: boolean;
+    at?: number;
+  }): Promise<AutoParkResult> {
+    const store = await repo.read();
+    const mode = store.settings.autoParkMode;
+    const dryRun = options.dryRun ?? mode === 'dry-run';
+    if (mode === 'off' && options.dryRun === undefined) return { dryRun: true, tabs: [] };
+    await syncLinked();
+    const links = await linkStore.read();
+    const at = options.at ?? now();
+    const fresh = await repo.read();
+    const savedById = new Map<string, { topic: Topic; tab: SavedTab }>();
+    for (const topic of fresh.topics)
+      for (const tab of topic.tabs) savedById.set(tab.id, { topic, tab });
+    const live = await browser.listTabs();
+    const savedActivity = new Map<number, number>();
+    for (const t of live) {
+      const saved = savedById.get(links.tabs[String(t.id)] ?? '');
+      if (saved) savedActivity.set(t.id, saved.tab.lastActiveAt);
+    }
+    const skipWindows = new Set<number>([
+      ...links.merging,
+      ...Object.keys(links.closing)
+        .map(Number)
+        .filter((w) => isClosing(links, w, at)),
+    ]);
+    const idle = selectIdleTabs({
+      tabs: live,
+      now: at,
+      days: fresh.settings.autoParkDays,
+      ownNewTabUrl,
+      savedActivity,
+      skipWindows,
+    });
+
+    // A tab belongs to a topic only when its window is linked to that topic.
+    const plan = idle.map((t) => {
+      const topicId = links.windows[String(t.windowId)] ?? null;
+      const saved = savedById.get(links.tabs[String(t.id)] ?? '');
+      const owned = topicId !== null && saved?.topic.id === topicId ? saved : undefined;
+      return { live: t, topicId: owned ? topicId : null, saved: owned?.tab };
+    });
+    const tabs: ParkCandidate[] = plan.map((p) => ({
+      topicId: p.topicId,
+      topicName: p.topicId ? (fresh.topics.find((x) => x.id === p.topicId)?.name ?? null) : null,
+      url: p.live.url,
+      title: p.live.title,
+    }));
+    if (dryRun || plan.length === 0) return { dryRun, tabs };
+
+    await repo.update(
+      (s) => {
+        for (const p of plan) {
+          if (p.topicId !== null && p.saved) {
+            const topic = s.topics.find((x) => x.id === p.topicId);
+            const tab = topic?.tabs.find((x) => x.id === p.saved?.id);
+            if (!topic || !tab) continue;
+            topic.tabs = topic.tabs.filter((x) => x.id !== tab.id);
+            topic.parked = [{ ...tab, parkedAt: at }, ...topic.parked];
+            topic.updatedAt = at;
+          } else {
+            s.unsortedParked = [
+              { ...toSavedTab(p.live, newId(), at), parkedAt: at },
+              ...s.unsortedParked,
+            ];
+          }
+        }
+        return s;
+      },
+      { snapshot: true },
+    );
+    const tabLinks = { ...links.tabs };
+    for (const p of plan) delete tabLinks[String(p.live.id)];
+    await linkStore.write({ ...links, tabs: tabLinks });
+    await browser.removeTabs(plan.map((p) => p.live.id));
+    return { dryRun: false, tabs };
+  }
+
+  /** Discards background tabs in topic windows that have been idle for an hour. */
+  async function discardIdle(): Promise<void> {
+    const links = await linkStore.read();
+    const at = now();
+    const ids = (await browser.listTabs())
+      .filter(
+        (t) =>
+          links.windows[String(t.windowId)] !== undefined &&
+          !t.active &&
+          !t.audible &&
+          !t.discarded &&
+          t.lastAccessed !== undefined &&
+          at - t.lastAccessed >= DISCARD_AFTER_MS,
+      )
+      .map((t) => t.id);
+    if (ids.length) await browser.discardTabs(ids).catch(() => undefined);
   }
 
   /** Brings every linked topic in line with its window. Must run inside the queue. */
@@ -695,6 +829,90 @@ export function createService(deps: ServiceDeps) {
       return run(async () => {
         await repo.update((s) => pruneExpired(s, now()));
         await syncLinked();
+        await autoParkInQueue({});
+        await discardIdle();
+      });
+    },
+
+    /**
+     * Parks idle tabs (see selectIdleTabs): a topic's tab moves to that topic's Parked list,
+     * any other tab to the unsorted Parked list, then the browser tab is closed. A dry run, or
+     * the dry-run setting, only reports what would be parked. `at` overrides the clock.
+     */
+    autoPark(options: { dryRun?: boolean; at?: number } = {}): Promise<AutoParkResult> {
+      return run(() => autoParkInQueue(options));
+    },
+
+    /** Reopens a tab from the unsorted Parked list in the given window, or a new one. */
+    restoreUnsorted(savedTabId: string, windowId?: number): Promise<void> {
+      return run(async () => {
+        const store = await repo.read();
+        const entry = store.unsortedParked.find((t) => t.id === savedTabId);
+        if (!entry) throw new UserError('Tab not found.');
+        await openParked([entry], windowId);
+        await repo.update((s) => {
+          s.unsortedParked = s.unsortedParked.filter((t) => t.id !== savedTabId);
+          return s;
+        });
+      });
+    },
+
+    /** Brings back every parked tab of a topic, or of the unsorted list when topicId is null. */
+    restoreAllParked(topicId: string | null, windowId?: number): Promise<{ restored: number }> {
+      return run(async () => {
+        const store = await repo.read();
+        if (topicId === null) {
+          const entries = store.unsortedParked;
+          if (entries.length === 0) return { restored: 0 };
+          await openParked(entries, windowId);
+          const ids = new Set(entries.map((t) => t.id));
+          await repo.update((s) => {
+            s.unsortedParked = s.unsortedParked.filter((t) => !ids.has(t.id));
+            return s;
+          });
+          return { restored: entries.length };
+        }
+        const topic = findTopic(store, topicId);
+        const entries = topic.parked;
+        if (entries.length === 0) return { restored: 0 };
+        const links = await linkStore.read();
+        const open = await liveWindowFor(links, topicId);
+        const tabLinks: Record<string, string> = {};
+        if (open !== null) {
+          for (const t of entries) {
+            const tabId = await browser.createTab(open, { url: t.url, pinned: t.pinned });
+            tabLinks[String(tabId)] = t.id;
+          }
+          await linkStore.write({ ...links, tabs: { ...links.tabs, ...tabLinks } });
+        }
+        const ids = new Set(entries.map((t) => t.id));
+        const at = now();
+        await repo.update((s) => {
+          const t = findTopic(s, topicId);
+          const back = t.parked.filter((p) => ids.has(p.id)).map((p) => unpark(p, at));
+          t.parked = t.parked.filter((p) => !ids.has(p.id));
+          t.tabs = [...t.tabs.filter((x) => !ids.has(x.id)), ...back];
+          t.updatedAt = at;
+          return s;
+        });
+        return { restored: entries.length };
+      });
+    },
+
+    updateSettings(patch: { autoParkDays?: number; autoParkMode?: AutoParkMode }): Promise<void> {
+      return run(async () => {
+        if (
+          patch.autoParkDays !== undefined &&
+          (!Number.isInteger(patch.autoParkDays) ||
+            patch.autoParkDays < 1 ||
+            patch.autoParkDays > 365)
+        ) {
+          throw new UserError('Choose between 1 and 365 days.');
+        }
+        await repo.update((s) => {
+          s.settings = { ...s.settings, ...patch };
+          return s;
+        });
       });
     },
 

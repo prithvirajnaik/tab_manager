@@ -88,3 +88,12 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **Search keeps a normalised index per store** (rebuilt only when the store changes), and the query is deferred, so typing stays fast with thousands of tabs. Only Latin diacritics are folded (U+0300 to U+036F); other scripts' marks, such as Japanese voicing, keep their meaning.
 - **A half-closed window brings back its sections too**: the revert record keeps the topic's sections, since a window's groups vanish with it.
 - **Grouping and ungrouping sync first**, and grouping in an open topic refuses when none of the chosen tabs is still open.
+
+## Phase 6
+
+- **The park rule is a pure function** (`src/core/autopark.ts`) of live tabs, saved activity and a clock. Idle means neither `Tab.lastAccessed` nor our saved `lastActiveAt` is within the configured days. Exempt: pinned, active and audible tabs, new tab pages, URLs that cannot be saved, tabs of unknown age, and windows that are closing or still being relinked after a restart.
+- **Auto-park runs from the 30-minute maintenance alarm.** A topic window's idle tab moves to that topic's Parked list; an idle tab in a window with no topic goes to the unsorted Parked list. The store is written first (after a snapshot), then the tab links are dropped, then the tabs are closed, so parking never reads as a close.
+- **Modes**: `on` (default, per PLAN.md), `dry-run` (computes, parks nothing) and `off`. The new tab page's Preview button always does a dry run.
+- **The `autoPark` command accepts a clock override (`at`)** so the end-to-end test can simulate 15 days passing; commands are accepted only from this extension's own pages.
+- **Parked tabs never expire.** Restore brings back one tab or all of them; into the topic's window if it is open, otherwise into the saved topic (or, for unsorted tabs, into the current window or a new one).
+- **No discarding right after a topic opens.** Discarding a tab before its first navigation commits can blank it, and the next sync would then file it as closed (seen in the e2e run). Instead the maintenance alarm discards background tabs in topic windows that have been idle for an hour.

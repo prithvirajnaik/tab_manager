@@ -15,6 +15,7 @@ export type TopicActions = {
   group(topicId: string, tabIds: string[], name: string): void;
   ungroup(topicId: string, sectionId: string): void;
   move(fromTopicId: string, tabId: string, toTopicId: string): void;
+  restoreAllParked(topicId: string): void;
 };
 
 type Props = {
@@ -230,16 +231,27 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions, to
 
       {topic.parked.length > 0 && (
         <Disclosure summary={`Parked (${topic.parked.length})`}>
-          {() =>
-            topic.parked.map((t) => (
+          {() => [
+            <li key="all" class="tab">
+              <button
+                type="button"
+                class="btn btn--small"
+                disabled={busy}
+                aria-label={`Restore all parked tabs of ${topic.name}`}
+                onClick={() => actions.restoreAllParked(topic.id)}
+              >
+                Restore all
+              </button>
+            </li>,
+            ...topic.parked.map((t) => (
               <TabRow
                 key={t.id}
                 tab={t}
                 meta={timeAgo(t.parkedAt, now)}
                 action={restoreButton(t, 'parked')}
               />
-            ))
-          }
+            )),
+          ]}
         </Disclosure>
       )}
 
