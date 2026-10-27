@@ -1039,7 +1039,11 @@ export function createService(deps: ServiceDeps) {
      */
     restoreSnapshot(at: number): Promise<void> {
       return run(async () => {
-        await repo.restoreSnapshot(at);
+        if (!(await repo.snapshots()).some((s) => s.at === at)) {
+          throw new UserError('That snapshot no longer exists.');
+        }
+        // Unlink first: if the worker stops between the two writes, no sync can overwrite
+        // the restored topics with a window's tabs.
         const links = await linkStore.read();
         await linkStore.write({
           ...links,
@@ -1049,6 +1053,7 @@ export function createService(deps: ServiceDeps) {
           merging: [],
           recentCloses: [],
         });
+        await repo.restoreSnapshot(at);
       });
     },
 

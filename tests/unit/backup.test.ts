@@ -73,6 +73,14 @@ describe('recovery commands', () => {
     expect(browser.windows.has(windowId)).toBe(true);
   });
 
+  it('refuses an unknown snapshot without unlinking anything', async () => {
+    const { browser, service, links } = setup();
+    const { windowId } = browser.open(['https://a/']);
+    await service.saveWindow(windowId, 'A');
+    await expect(service.restoreSnapshot(12345)).rejects.toThrow(/no longer exists/);
+    expect((await links.read()).windows[windowId]).toBeDefined();
+  });
+
   it('refuses to reset data that can be read', async () => {
     const { browser, service, repo } = setup();
     await service.saveWindow(browser.open(['https://a/']).windowId, 'A');
