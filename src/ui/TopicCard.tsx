@@ -7,6 +7,7 @@ import { hostOf, plural, timeAgo } from './format';
 export type TopicActions = {
   open(topicId: string): void;
   park(topicId: string): void;
+  detach(topicId: string): void;
   rename(topicId: string, name: string): void;
   remove(topicId: string): void;
   restore(topicId: string, tabId: string, from: 'recentlyClosed' | 'parked'): void;
@@ -162,6 +163,18 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: 
             onClick={() => actions.park(topic.id)}
           >
             Park
+          </button>
+        )}
+        {isOpen && (
+          <button
+            type="button"
+            class="btn btn--quiet"
+            disabled={busy}
+            aria-label={`Unlink ${topic.name} from its window`}
+            title="Stop syncing this topic with its window. The window stays open."
+            onClick={() => actions.detach(topic.id)}
+          >
+            Unlink
           </button>
         )}
         <button

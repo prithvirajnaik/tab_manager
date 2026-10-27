@@ -10,8 +10,9 @@ function everything(store: Store): Set<string> {
 
 describe('live link', () => {
   it('follows add, navigate, move, close and window close', async () => {
-    const { browser, service, repo } = setup();
+    const { browser, service, repo, advance } = setup();
     const { windowId, tabIds } = browser.open(['https://a/', 'https://b/']);
+    browser.open(['https://other/']);
     const topic = await service.saveWindow(windowId, 'T');
     const read = async () => (await repo.read()).topics.find((t) => t.id === topic.id)!;
 
@@ -38,13 +39,159 @@ describe('live link', () => {
     expect(t.tabs.map((x) => x.url)).toEqual(['https://c/', 'https://a2/']);
     expect(t.recentlyClosed.map((x) => x.url)).toEqual(['https://b/']);
 
-    // Closing the window: tab removals arrive flagged as window closing, then the window goes.
+    // Closing the window later: removals arrive flagged as window closing, then the window goes.
+    advance(10_000);
     await service.noteWindowClosing(windowId);
     browser.closeWindow(windowId);
     await service.syncAll();
     t = await read();
     expect(t.windowId).toBeNull();
     expect(t.tabs.map((x) => x.url)).toEqual(['https://c/', 'https://a2/']);
+  });
+
+  it('a sync that runs as a window starts closing has its closes put back', async () => {
+    const { browser, service, repo, advance } = setup();
+    browser.open(['https://other/']);
+    const { windowId, tabIds } = browser.open(['https://a/', 'https://b/', 'https://c/']);
+    await service.saveWindow(windowId, 'T');
+    // The close has begun: two tabs are gone, the window still exists, and the
+    // isWindowClosing notification is queued behind a sync.
+    browser.closeTab(tabIds[0]!);
+    browser.closeTab(tabIds[1]!);
+    await service.syncAll();
+    expect((await repo.read()).topics[0]!.recentlyClosed).toHaveLength(2);
+    advance(100);
+    await service.noteWindowClosing(windowId);
+    browser.closeWindow(windowId);
+    await service.syncAll();
+    const t = (await repo.read()).topics[0]!;
+    expect(t.tabs.map((x) => x.url)).toEqual(['https://a/', 'https://b/', 'https://c/']);
+    expect(t.recentlyClosed).toEqual([]);
+    expect(t.windowId).toBeNull();
+  });
+
+  it('closes from longer ago stay closed when the window later closes', async () => {
+    const { browser, service, repo, advance } = setup();
+    browser.open(['https://other/']);
+    const { windowId, tabIds } = browser.open(['https://a/', 'https://b/']);
+    await service.saveWindow(windowId, 'T');
+    browser.closeTab(tabIds[0]!);
+    await service.syncAll();
+    advance(60_000);
+    await service.noteWindowClosing(windowId);
+    browser.closeWindow(windowId);
+    await service.syncAll();
+    const t = (await repo.read()).topics[0]!;
+    expect(t.tabs.map((x) => x.url)).toEqual(['https://b/']);
+    expect(t.recentlyClosed.map((x) => x.url)).toEqual(['https://a/']);
+  });
+
+  it('a window whose close was cancelled is synced again after the closing TTL', async () => {
+    const { browser, service, repo, advance } = setup();
+    browser.open(['https://other/']);
+    const { windowId } = browser.open(['https://a/']);
+    await service.saveWindow(windowId, 'T');
+    await service.noteWindowClosing(windowId);
+    advance(11_000);
+    browser.addTab(windowId, { url: 'https://b/' });
+    await service.syncAll();
+    expect((await repo.read()).topics[0]!.tabs.map((x) => x.url)).toEqual([
+      'https://a/',
+      'https://b/',
+    ]);
+  });
+
+  it('quitting the browser leaves topics marked open so they relink on restore', async () => {
+    const { browser, service, repo, session } = setup();
+    const { windowId } = browser.open(['https://a1/', 'https://a2/']);
+    const topic = await service.saveWindow(windowId, 'A');
+    // Quit: the last window goes away and a sync manages to run before exit.
+    browser.restart();
+    const restored = [...browser.windows.keys()];
+    for (const w of restored) browser.windows.delete(w);
+    await service.syncAll();
+    expect((await repo.read()).topics[0]!.windowId).not.toBeNull();
+    // Next start: the session restores the window under a new id.
+    session.data = {};
+    const back = browser.open(['https://a1/', 'https://a2/']);
+    await service.syncAll();
+    const t = (await repo.read()).topics.find((x) => x.id === topic.id)!;
+    expect(t.windowId).toBe(back.windowId);
+  });
+
+  it('relink needs a strong URL match, and its first sync closes nothing', async () => {
+    const { browser, service, repo, session } = setup();
+    const { windowId } = browser.open(['https://a1/', 'https://a2/', 'https://a3/']);
+    const topic = await service.saveWindow(windowId, 'A');
+    browser.closeWindow(windowId);
+    browser.open(['https://keep/']);
+    await repo.update((s) => {
+      s.topics[0]!.windowId = 999;
+      return s;
+    });
+    session.data = {};
+    // One shared URL out of two is not a match.
+    browser.open(['https://a1/', 'https://unrelated/']);
+    await service.syncAll();
+    expect((await repo.read()).topics[0]!.windowId).toBe(999);
+    // Two of three restored: a match, and the missing tab is kept, not closed.
+    const partial = browser.open(['https://a1/', 'https://a2/']);
+    await service.syncAll();
+    const t = (await repo.read()).topics.find((x) => x.id === topic.id)!;
+    expect(t.windowId).toBe(partial.windowId);
+    expect(t.tabs.map((x) => x.url).sort()).toEqual(['https://a1/', 'https://a2/', 'https://a3/']);
+    expect(t.recentlyClosed).toEqual([]);
+  });
+
+  it('detachWindow unlinks a topic and leaves its window open', async () => {
+    const { browser, service, repo, links } = setup();
+    const { windowId } = browser.open(['https://a/']);
+    const topic = await service.saveWindow(windowId, 'A');
+    await service.detachWindow(topic.id);
+    expect(browser.windows.has(windowId)).toBe(true);
+    expect((await repo.read()).topics[0]!.windowId).toBeNull();
+    expect((await links.read()).windows[windowId]).toBeUndefined();
+    browser.addTab(windowId, { url: 'https://b/' });
+    await service.syncAll();
+    expect((await repo.read()).topics[0]!.tabs.map((x) => x.url)).toEqual(['https://a/']);
+  });
+
+  it('a tab dragged through a temporary window keeps its id and is not duplicated', async () => {
+    const { browser, service, repo } = setup();
+    const a = browser.open(['https://a1/', 'https://a2/']);
+    const b = browser.open(['https://b1/']);
+    const ta = await service.saveWindow(a.windowId, 'A');
+    const tb = await service.saveWindow(b.windowId, 'B');
+    const movingId = (await repo.read()).topics[0]!.tabs[1]!.id;
+    // Mid-drag the tab sits in a temporary window and a sync runs.
+    const temp = browser.open(['chrome://newtab/']);
+    browser.move(a.tabIds[1]!, temp.windowId, 0);
+    await service.syncAll();
+    expect((await repo.read()).topics[0]!.recentlyClosed.map((x) => x.id)).toEqual([movingId]);
+    // Dropped into B.
+    browser.move(a.tabIds[1]!, b.windowId, -1);
+    await service.syncAll();
+    const topics = (await repo.read()).topics;
+    const A = topics.find((t) => t.id === ta.id)!;
+    const B = topics.find((t) => t.id === tb.id)!;
+    expect(A.tabs.map((x) => x.url)).toEqual(['https://a1/']);
+    expect(A.recentlyClosed).toEqual([]);
+    expect(B.tabs.map((x) => [x.url, x.id])).toEqual([
+      ['https://b1/', B.tabs[0]!.id],
+      ['https://a2/', movingId],
+    ]);
+  });
+
+  it('replaceTab carries a link over to a prerendered tab', async () => {
+    const { browser, service, links } = setup();
+    const { windowId, tabIds } = browser.open(['https://a/']);
+    await service.saveWindow(windowId, 'A');
+    const saved = (await links.read()).tabs[tabIds[0]!];
+    await service.replaceTab(555, tabIds[0]!);
+    const after = await links.read();
+    expect(after.tabs[555]).toBe(saved);
+    expect(after.tabs[tabIds[0]!]).toBeUndefined();
+    await service.replaceTab(556, 12345);
   });
 
   it('a sync during window closing does not move tabs to Recently closed', async () => {
@@ -196,6 +343,8 @@ describe('event sequences never lose a saved tab', () => {
         for (const t of store.topics) for (const s of t.tabs) seenIds.add(s.id);
         const ids = everything(store);
         for (const id of seenIds) if (!ids.has(id)) throw new Error(`seed ${seed}: lost ${id}`);
+        const all = store.topics.flatMap((t) => [...t.tabs, ...t.recentlyClosed, ...t.parked]);
+        if (all.length !== ids.size) throw new Error(`seed ${seed}: a saved id is in two places`);
       };
       await record();
 
@@ -231,6 +380,32 @@ describe('event sequences never lose a saved tab', () => {
           ctx = setup({ browser, local: ctx.local, session: ctx.session });
         } else if (r < 0.86 && tab !== undefined) {
           browser.update(tab, { url: 'blob:https://site/x' });
+        } else if (r < 0.89 && w !== undefined) {
+          // A close that a sync catches half-way.
+          const inWindow = browser.windows.get(w) ?? [];
+          if (inWindow.length > 1) browser.closeTab(inWindow[0]!);
+          await ctx.service.syncAll();
+          await ctx.service.noteWindowClosing(w);
+          browser.closeWindow(w);
+        } else if (r < 0.92 && tab !== undefined && w !== undefined) {
+          // A drag through a temporary window.
+          const temp = browser.open(['chrome://newtab/']);
+          browser.move(tab, temp.windowId, 0);
+          await ctx.service.syncAll();
+          if (browser.windows.has(w)) browser.move(tab, w, -1);
+        } else if (r < 0.94) {
+          // Restart onto the new tab page only, then a late restore.
+          browser.restart();
+          const restored = [...browser.windows.entries()];
+          for (const [id] of restored) browser.windows.delete(id);
+          ctx.session.data = {};
+          ctx = setup({ browser, local: ctx.local, session: ctx.session });
+          browser.open(['chrome://newtab/']);
+          await ctx.service.syncAll();
+          for (const [id, tabs] of restored) browser.windows.set(id, tabs);
+        } else if (r < 0.96) {
+          const t = pick((await ctx.repo.read()).topics);
+          if (t) await ctx.service.detachWindow(t.id);
         }
         if (random() < 0.7) await ctx.service.syncAll();
         await record();

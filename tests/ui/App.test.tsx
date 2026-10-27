@@ -20,7 +20,7 @@ function fakeApi(overrides: Partial<Api> = {}) {
       return () => undefined;
     },
     favicon: (u) => `fav:${u}`,
-    currentWindowId: async () => null,
+    currentTopicId: async () => null,
     ...overrides,
   };
   return { api, sent, push: (l: LoadResult) => push(l) };
@@ -149,12 +149,27 @@ describe('App', () => {
   });
 
   it('marks the topic linked to this window and hides the save form', async () => {
-    const { api } = fakeApi({ currentWindowId: async () => 4 });
+    const { api } = fakeApi({ currentTopicId: async () => 'mine' });
     render(
-      <App initial={loaded(store({ topics: [topic({ name: 'Mine', windowId: 4 })] }))} api={api} />,
+      <App
+        initial={loaded(store({ topics: [topic({ id: 'mine', name: 'Mine', windowId: 4 })] }))}
+        api={api}
+      />,
     );
     expect(await screen.findByText('This window')).toBeTruthy();
     expect(screen.queryByLabelText('Save this window as')).toBeNull();
+  });
+
+  it('unlinks an open topic from its window', async () => {
+    const { api, sent } = fakeApi();
+    render(
+      <App
+        initial={loaded(store({ topics: [topic({ id: 't', name: 'W', windowId: 3 })] }))}
+        api={api}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Unlink W from its window' }));
+    await waitFor(() => expect(sent).toEqual([{ type: 'detachWindow', topicId: 't' }]));
   });
 
   it('re-renders on storage changes', async () => {

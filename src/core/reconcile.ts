@@ -16,6 +16,11 @@ export type ReconcileOptions = {
   foreign?: Map<string, SavedTab>;
   /** Maps a live group id to a section id of this topic, if any. */
   sectionForGroup?: (groupId: number) => string | undefined;
+  /**
+   * Keep saved tabs that are missing from the window instead of closing them. Used for the
+   * first sync of a window relinked after a restart, which may not hold every tab.
+   */
+  keepMissing?: boolean;
 };
 
 export type ReconcileResult = {
@@ -24,6 +29,8 @@ export type ReconcileResult = {
   tabLinks: Record<string, string>;
   /** Saved ids taken over from other topics (tabs dragged into this window). */
   adopted: string[];
+  /** Saved ids this reconcile moved to Recently closed. */
+  closedIds: string[];
   changed: boolean;
 };
 
@@ -84,9 +91,11 @@ export function reconcileTopic(
     return saved;
   });
 
-  const closed: ClosedTab[] = topic.tabs
-    .filter((s) => !used.has(s.id) && !opts.elsewhere.has(s.id))
-    .map((s) => ({ ...s, closedAt: opts.now }));
+  const missing = topic.tabs.filter((s) => !used.has(s.id) && !opts.elsewhere.has(s.id));
+  if (opts.keepMissing) tabs.push(...missing);
+  const closed: ClosedTab[] = opts.keepMissing
+    ? []
+    : missing.map((s) => ({ ...s, closedAt: opts.now }));
   const cutoff = opts.now - RECENTLY_CLOSED_DAYS * DAY;
   const recentlyClosed = [...closed, ...topic.recentlyClosed].filter((c) => c.closedAt >= cutoff);
 
@@ -99,7 +108,34 @@ export function reconcileTopic(
     topic: changed ? { ...topic, tabs, recentlyClosed, updatedAt: opts.now } : topic,
     tabLinks,
     adopted,
+    closedIds: closed.map((c) => c.id),
     changed,
+  };
+}
+
+/**
+ * Puts tabs a sync moved to Recently closed back into the topic, in their earlier order.
+ * Used when the "closes" turn out to have been their window closing.
+ */
+export function revertCloses(topic: Topic, ids: string[], order: string[]): Topic {
+  const wanted = new Set(ids);
+  const back = topic.recentlyClosed.filter((c) => wanted.has(c.id));
+  if (back.length === 0) return topic;
+  const byId = new Map<string, SavedTab>(topic.tabs.map((t) => [t.id, t]));
+  for (const c of back) {
+    const tab: SavedTab & { closedAt?: number } = { ...c };
+    delete tab.closedAt;
+    byId.set(c.id, tab);
+  }
+  const ordered = order.flatMap((id) => {
+    const t = byId.get(id);
+    byId.delete(id);
+    return t ? [t] : [];
+  });
+  return {
+    ...topic,
+    tabs: [...ordered, ...byId.values()],
+    recentlyClosed: topic.recentlyClosed.filter((c) => !wanted.has(c.id)),
   };
 }
 

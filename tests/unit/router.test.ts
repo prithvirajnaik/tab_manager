@@ -62,6 +62,7 @@ describe('handleMessage', () => {
     ).toEqual({ ok: false, error: 'Tab not found.' });
     for (const msg of [
       { type: 'renameTopic', topicId, name: 'B' },
+      { type: 'detachWindow', topicId },
       { type: 'deleteTopic', topicId },
       { type: 'undoDelete', topicId },
     ]) {

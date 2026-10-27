@@ -2,16 +2,22 @@ import { RECENTLY_CLOSED_DAYS, TRASH_DAYS, type Store, type Topic } from './mode
 
 const DAY = 86_400_000;
 
-/** Minimum Jaccard similarity of URL sets for a window to count as a topic's window. */
+/**
+ * A window counts as a topic's restored window when its URL set is nearly the same
+ * (Jaccard >= 0.8), or clearly overlapping (>= 0.5) with at least two shared URLs. One shared
+ * URL out of two is not enough: a fresh window with one common site would match.
+ */
+export const STRONG_MATCH = 0.8;
 export const MATCH_THRESHOLD = 0.5;
+export const MIN_SHARED = 2;
 
 export type WindowUrls = { windowId: number; urls: string[] };
 
-function jaccard(a: Set<string>, b: Set<string>): number {
+function similarity(a: Set<string>, b: Set<string>): { score: number; shared: number } {
   let shared = 0;
   for (const x of a) if (b.has(x)) shared++;
   const union = a.size + b.size - shared;
-  return union === 0 ? 0 : shared / union;
+  return { score: union === 0 ? 0 : shared / union, shared };
 }
 
 /**
@@ -24,8 +30,10 @@ export function matchWindows(topics: Topic[], windows: WindowUrls[]): Map<number
   for (const w of windows) {
     const urls = new Set(w.urls);
     for (const t of candidates) {
-      const score = jaccard(urls, new Set(t.tabs.map((s) => s.url)));
-      if (score >= MATCH_THRESHOLD) pairs.push({ windowId: w.windowId, topicId: t.id, score });
+      const { score, shared } = similarity(urls, new Set(t.tabs.map((s) => s.url)));
+      if (score >= STRONG_MATCH || (score >= MATCH_THRESHOLD && shared >= MIN_SHARED)) {
+        pairs.push({ windowId: w.windowId, topicId: t.id, score });
+      }
     }
   }
   pairs.sort((a, b) => b.score - a.score);

@@ -16,6 +16,16 @@ describe('debounce', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it('fires by maxWait even while calls keep coming', () => {
+    const fn = vi.fn();
+    const trigger = debounce(fn, 300, 1000);
+    for (let i = 0; i < 10; i++) {
+      trigger();
+      vi.advanceTimersByTime(200);
+    }
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
   it('runs again for a later burst', () => {
     const fn = vi.fn();
     const trigger = debounce(fn, 100);

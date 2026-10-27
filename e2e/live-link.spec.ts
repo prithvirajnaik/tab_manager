@@ -43,7 +43,9 @@ test('a saved window stays in sync as tabs are added, moved and closed', async (
     .toEqual([site.url('b')]);
   expect((await topic()).tabs.map((t) => t.url)).toEqual([site.url('c'), site.url('a')]);
 
-  // Close the whole window: the topic keeps its tabs and is no longer open.
+  // Close the whole window: the topic keeps its tabs and is no longer open. Wait out the
+  // 5 s window in which a close is still treated as part of a window close.
+  await ext.waitForTimeout(5_500);
   await ext.evaluate((id) => chrome.windows.remove(id), windowId);
   await expect.poll(() => windowExists(ext, windowId)).toBe(false);
   await expect.poll(async () => (await topic()).windowId).toBeNull();
