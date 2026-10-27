@@ -1,10 +1,12 @@
 import { unbindWindow, windowForTopic, type LinkStore, type Links } from './links';
-import { isOpenableUrl, type SavedTab, type Store, type Topic } from './model';
+import { TRASH_DAYS, isOpenableUrl, type SavedTab, type Store, type Topic } from './model';
 import type { BrowserPort, Clock, LiveTab } from './ports';
 import { createWriteQueue } from './queue';
 import { reconcileTopic } from './reconcile';
 import type { Repo } from './repo';
 import { isBlankPage, isSaveable, openOrder, toSavedTab } from './tabs';
+
+const DAY = 86_400_000;
 
 /** An error whose message is safe and useful to show to the user. */
 export class UserError extends Error {
@@ -296,6 +298,59 @@ export function createService(deps: ServiceDeps) {
     /** Brings every linked topic in line with its window. */
     syncAll(): Promise<void> {
       return queue.run(syncLinked);
+    },
+
+    renameTopic(topicId: string, name: string): Promise<void> {
+      return queue.run(async () => {
+        const topicName = cleanName(name);
+        await repo.update((s) => {
+          const t = findTopic(s, topicId);
+          t.name = topicName;
+          t.updatedAt = now();
+          return s;
+        });
+      });
+    },
+
+    /**
+     * Moves a topic to the trash (kept TRASH_DAYS) after a snapshot. Its window, if open,
+     * stays open and is simply no longer linked.
+     */
+    deleteTopic(topicId: string): Promise<void> {
+      return queue.run(async () => {
+        findTopic(await repo.read(), topicId);
+        const links = await linkStore.read();
+        const windowId = windowForTopic(links, topicId);
+        const at = now();
+        await repo.update(
+          (s) => {
+            const topic = findTopic(s, topicId);
+            const cutoff = at - TRASH_DAYS * DAY;
+            s.topics = s.topics.filter((t) => t.id !== topicId);
+            s.trash = [
+              { topic: { ...topic, windowId: null }, deletedAt: at },
+              ...s.trash.filter((e) => e.deletedAt >= cutoff),
+            ];
+            return s;
+          },
+          { snapshot: true },
+        );
+        // Stale tab links are dropped by the next sync, which rebuilds them from linked windows.
+        if (windowId !== null) await linkStore.write(unbindWindow(links, windowId));
+      });
+    },
+
+    undoDelete(topicId: string): Promise<void> {
+      return queue.run(async () => {
+        await repo.update((s) => {
+          const entry = s.trash.find((e) => e.topic.id === topicId);
+          if (!entry) throw new UserError('Deleted topic not found.');
+          const clash = s.topics.some((t) => t.id === topicId);
+          s.trash = s.trash.filter((e) => e !== entry);
+          s.topics.push({ ...entry.topic, id: clash ? newId() : topicId, windowId: null });
+          return s;
+        });
+      });
     },
   };
 }

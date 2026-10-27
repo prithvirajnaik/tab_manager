@@ -33,6 +33,15 @@ export async function handleMessage(
       case 'sync':
         await service.syncAll();
         return { ok: true };
+      case 'renameTopic':
+        await service.renameTopic(cmd.topicId, cmd.name);
+        return { ok: true };
+      case 'deleteTopic':
+        await service.deleteTopic(cmd.topicId);
+        return { ok: true };
+      case 'undoDelete':
+        await service.undoDelete(cmd.topicId);
+        return { ok: true };
     }
   } catch (e) {
     if (e instanceof UserError || e instanceof StoreUnreadableError) {

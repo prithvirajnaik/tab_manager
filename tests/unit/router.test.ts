@@ -57,6 +57,13 @@ describe('handleMessage', () => {
         own,
       ),
     ).toEqual({ ok: false, error: 'Tab not found.' });
+    for (const msg of [
+      { type: 'renameTopic', topicId, name: 'B' },
+      { type: 'deleteTopic', topicId },
+      { type: 'undoDelete', topicId },
+    ]) {
+      expect(await handleMessage(service, msg, own)).toEqual({ ok: true });
+    }
   });
 
   it('hides unexpected errors behind a safe message', async () => {
