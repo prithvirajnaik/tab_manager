@@ -1,0 +1,63 @@
+{
+  "name": "tab-topics",
+  "version": "0.1.0",
+  "description": "Tab Topics: live-linked tab topics for Brave (Chromium MV3).",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "postinstall": "wxt prepare",
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "verify": "npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run test:e2e",
+    "prepare": "simple-git-hooks"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prithvirajnaik/tab_manager.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/prithvirajnaik/tab_manager/issues"
+  },
+  "homepage": "https://github.com/prithvirajnaik/tab_manager#readme",
+  "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
+    "@preact/preset-vite": "^2.10.6",
+    "@testing-library/preact": "^3.2.6",
+    "@types/chrome": "^0.3.6",
+    "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^5.0.5",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.9.10",
+    "simple-git-hooks": "^2.14.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5",
+    "wxt": "^0.21.5"
+  },
+  "dependencies": {
+    "preact": "^11.1.0",
+    "zod": "^4.6.7"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "simple-git-hooks": {
+    "pre-push": "npm run verify"
+  }
+}

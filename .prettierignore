@@ -1,0 +1,9 @@
+dist/
+.wxt/
+.output/
+coverage/
+test-results/
+playwright-report/
+package-lock.json
+docs/Claude Code brief*.md
+PLAN.md
