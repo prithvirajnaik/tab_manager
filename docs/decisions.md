@@ -60,3 +60,14 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **Cards are memoised** with stable actions and a minute-granular clock, and tab lists render only while their `<details>` is open, and unchanged topics keep their object identity across storage changes, so per-event writes in phase 4 redraw only the card that changed.
 - **Rename commits once.** Enter or Escape settles the edit, so the blur that follows is ignored; focus returns to the Rename button.
 - **Render timing is measured with a `performance.mark`** placed right after the render call, and a unit test asserts `loadStore` reads storage exactly once.
+
+## Phase 4
+
+- **Every relevant browser event schedules one debounced sync** (300 ms) that reconciles all linked windows from a fresh `tabs.query`. There is no incremental per-event reducer: the reconciler is the reducer, and a full re-read cannot drift from the browser. The pending timer is the worker's only in-memory state, and losing it is harmless.
+- **`tabs.onActivated` does not trigger a sync.** `lastActiveAt` comes from `Tab.lastAccessed` (Chrome 121+, verified on developer.chrome.com), picked up on the next sync; syncing on every tab switch would write storage constantly.
+- **Window closing is flagged, not inferred.** `tabs.onRemoved` with `isWindowClosing` marks the window as closing in session links, and syncs skip it until `windows.onRemoved`, so closing a window never moves its tabs to Recently closed.
+- **Restored windows are relinked by URL similarity** (Jaccard of saved URL sets, at least 0.5, greedy, one-to-one) after any browser restart, extension update or reload, after a snapshot. Browsers can restore windows after the extension starts, so matching is retried for 2 minutes; topics still unmatched after that are marked closed and keep every tab.
+- **A dragged-in tab keeps its saved id**, and only the topic it came from lets go of it (`adopted` ids). Earlier, every topic was filtered against all live tabs.
+- **A 30-minute `maintenance` alarm** expires Recently closed entries and trash older than 30 days, then syncs, as a safety net for missed events.
+- **Imports reject repeated saved-tab ids** across topics.
+- **Randomized event-sequence test**: 150 seeded sequences of 40 steps (add, close, navigate, pin, move within and across windows, close window, open, park, worker restart, browser restart, navigate to an unsaveable URL) assert that no saved-tab id ever disappears from the store. A mutation check (dropping closed tabs in the reconciler) makes it fail on seed 1.

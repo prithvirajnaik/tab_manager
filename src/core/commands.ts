@@ -1,9 +1,10 @@
-import { unbindWindow, windowForTopic, type LinkStore, type Links } from './links';
+import { emptyLinks, unbindWindow, windowForTopic, type LinkStore, type Links } from './links';
 import { TRASH_DAYS, isOpenableUrl, type SavedTab, type Store, type Topic } from './model';
 import type { BrowserPort, Clock, LiveTab } from './ports';
 import { createWriteQueue } from './queue';
 import { reconcileTopic } from './reconcile';
 import type { Repo } from './repo';
+import { matchWindows, pruneExpired } from './startup';
 import { isBlankPage, isSaveable, openOrder, toSavedTab } from './tabs';
 
 const DAY = 86_400_000;
@@ -22,6 +23,9 @@ export type ServiceDeps = {
   /** URL of this extension's new tab page; such tabs are never saved. */
   ownNewTabUrl: string;
 };
+
+/** How long after a restart restored windows may still be matched to their topics. */
+export const RELINK_GRACE_MS = 2 * 60_000;
 
 export type RestoreSource = 'recentlyClosed' | 'parked';
 
@@ -45,6 +49,64 @@ export function createService(deps: ServiceDeps) {
   // Commands and syncs run one at a time so browser calls, links and store stay consistent.
   const queue = createWriteQueue();
 
+  /**
+   * Relinks windows after a browser restart (session storage is cleared on restart, update
+   * and reload). Topics that were open are matched to open, unlinked windows by URL
+   * similarity. Browsers may restore windows after the extension starts, so matching is
+   * retried for RELINK_GRACE_MS; after that, topics still unmatched are marked closed, keeping
+   * every tab. A snapshot is taken first.
+   */
+  async function relinkRestoredWindows(): Promise<void> {
+    let links = await linkStore.read();
+    const at = now();
+    if (links.reconciledAt === null) {
+      const store = await repo.read();
+      if (store.topics.some((t) => t.windowId !== null))
+        await repo.update((x) => x, { snapshot: true });
+      links = { ...emptyLinks(), reconciledAt: at };
+      await linkStore.write(links);
+    }
+    const linked = new Set(Object.values(links.windows));
+    const store = await repo.read();
+    const stale = store.topics.filter((t) => t.windowId !== null && !linked.has(t.id));
+    if (stale.length === 0) return;
+
+    if (at - (links.reconciledAt ?? at) > RELINK_GRACE_MS) {
+      const ids = new Set(stale.map((t) => t.id));
+      await repo.update((x) => {
+        for (const t of x.topics) if (ids.has(t.id)) t.windowId = null;
+        return x;
+      });
+      return;
+    }
+
+    const urls = new Map<number, string[]>();
+    for (const t of await browser.listTabs()) {
+      if (links.windows[String(t.windowId)] || !isSaveable(t.url, ownNewTabUrl)) continue;
+      const list = urls.get(t.windowId);
+      if (list) list.push(t.url);
+      else urls.set(t.windowId, [t.url]);
+    }
+    const windows = [...urls].map(([windowId, list]) => ({ windowId, urls: list }));
+    const matched = matchWindows(stale, windows);
+    if (matched.size === 0) return;
+    await linkStore.write({
+      ...links,
+      windows: {
+        ...links.windows,
+        ...Object.fromEntries([...matched].map(([w, topicId]) => [String(w), topicId])),
+      },
+    });
+  }
+
+  /** Every command and sync: serialized, and only after restored windows are relinked. */
+  function run<T>(task: () => Promise<T>): Promise<T> {
+    return queue.run(async () => {
+      await relinkRestoredWindows();
+      return task();
+    });
+  }
+
   async function liveWindowFor(links: Links, topicId: string): Promise<number | null> {
     const windowId = windowForTopic(links, topicId);
     if (windowId === null) return null;
@@ -63,7 +125,12 @@ export function createService(deps: ServiceDeps) {
       else byWindow.set(t.windowId, [t]);
     }
 
-    const nextLinks: Links = { ...links, windows: { ...links.windows }, tabs: {} };
+    const nextLinks: Links = {
+      ...links,
+      windows: { ...links.windows },
+      tabs: {},
+      closing: links.closing.filter((w) => openWindows.has(w)),
+    };
     await repo.update((store) => {
       const topicIds = new Set(store.topics.map((t) => t.id));
       // Windows that will be reconciled: open, not closing, linked to an existing topic.
@@ -88,11 +155,10 @@ export function createService(deps: ServiceDeps) {
       }
       const foreign = new Map<string, SavedTab>();
       for (const t of store.topics) for (const s of t.tabs) foreign.set(s.id, s);
-      const liveOwner = new Map<string, string>();
+      const adoptedBy = new Map<string, string>();
 
       for (const [w, topicId] of Object.entries(links.windows)) {
         const windowId = Number(w);
-        if (links.closing.includes(windowId)) continue;
         const index = store.topics.findIndex((t) => t.id === topicId);
         const topic = store.topics[index];
         if (!topic) {
@@ -105,6 +171,8 @@ export function createService(deps: ServiceDeps) {
           if (topic.windowId === windowId) store.topics[index] = { ...topic, windowId: null };
           continue;
         }
+        // Mid-close: tabs are disappearing because the window is, not because they were closed.
+        if (links.closing.includes(windowId)) continue;
         const elsewhere = new Set<string>();
         for (const [savedId, adopter] of adoptedIn)
           if (adopter !== windowId) elsewhere.add(savedId);
@@ -117,17 +185,19 @@ export function createService(deps: ServiceDeps) {
           foreign,
         });
         Object.assign(nextLinks.tabs, result.tabLinks);
-        for (const s of result.topic.tabs) liveOwner.set(s.id, topicId);
+        for (const id of result.adopted) adoptedBy.set(id, topicId);
         store.topics[index] =
           result.topic.windowId === windowId ? result.topic : { ...result.topic, windowId };
       }
 
-      // A tab open in a linked window belongs to that topic alone, so a tab dragged out of a
-      // window that then closed is not kept in two topics.
-      store.topics = store.topics.map((t) => {
-        const tabs = t.tabs.filter((s) => (liveOwner.get(s.id) ?? t.id) === t.id);
-        return tabs.length === t.tabs.length ? t : { ...t, tabs, updatedAt: now() };
-      });
+      // A tab dragged into another topic's window now lives there; the topic it came from
+      // (whose window may have closed with the drag) lets go of it.
+      if (adoptedBy.size) {
+        store.topics = store.topics.map((t) => {
+          const tabs = t.tabs.filter((s) => (adoptedBy.get(s.id) ?? t.id) === t.id);
+          return tabs.length === t.tabs.length ? t : { ...t, tabs, updatedAt: now() };
+        });
+      }
       return store;
     });
     await linkStore.write(nextLinks);
@@ -136,7 +206,7 @@ export function createService(deps: ServiceDeps) {
   return {
     /** Saves a window as a new topic and links them. */
     saveWindow(windowId: number, name: string): Promise<Topic> {
-      return queue.run(async () => {
+      return run(async () => {
         const topicName = cleanName(name);
         if (!(await browser.listWindowIds()).includes(windowId)) {
           throw new UserError('That window is no longer open.');
@@ -184,7 +254,7 @@ export function createService(deps: ServiceDeps) {
      * to open move to the topic's Parked list, where they are kept without expiring.
      */
     openTopic(topicId: string): Promise<{ failed: number }> {
-      return queue.run(async () => {
+      return run(async () => {
         const store = await repo.read();
         const topic = findTopic(store, topicId);
         const links = await linkStore.read();
@@ -234,7 +304,7 @@ export function createService(deps: ServiceDeps) {
      * saved (blob: pages, say) stay open in the now unlinked window instead of being closed.
      */
     parkTopic(topicId: string): Promise<{ leftOpen: number }> {
-      return queue.run(async () => {
+      return run(async () => {
         findTopic(await repo.read(), topicId);
         await syncLinked();
         const links = await linkStore.read();
@@ -265,7 +335,7 @@ export function createService(deps: ServiceDeps) {
 
     /** Moves a tab from recently closed or parked back into the topic, opening it if live. */
     restoreTab(topicId: string, savedTabId: string, from: RestoreSource): Promise<void> {
-      return queue.run(async () => {
+      return run(async () => {
         const store = await repo.read();
         const topic = findTopic(store, topicId);
         const entry = topic[from].find((t) => t.id === savedTabId);
@@ -298,11 +368,31 @@ export function createService(deps: ServiceDeps) {
 
     /** Brings every linked topic in line with its window. */
     syncAll(): Promise<void> {
-      return queue.run(syncLinked);
+      return run(syncLinked);
+    },
+
+    /**
+     * Called when a tab is removed because its window is closing: until the window is gone,
+     * syncs leave that topic alone, so the closing does not read as tabs being closed.
+     */
+    noteWindowClosing(windowId: number): Promise<void> {
+      return run(async () => {
+        const links = await linkStore.read();
+        if (!links.windows[String(windowId)] || links.closing.includes(windowId)) return;
+        await linkStore.write({ ...links, closing: [...links.closing, windowId] });
+      });
+    },
+
+    /** Periodic upkeep: expire old Recently closed entries and trash, then sync. */
+    maintenance(): Promise<void> {
+      return run(async () => {
+        await repo.update((s) => pruneExpired(s, now()));
+        await syncLinked();
+      });
     },
 
     renameTopic(topicId: string, name: string): Promise<void> {
-      return queue.run(async () => {
+      return run(async () => {
         const topicName = cleanName(name);
         await repo.update((s) => {
           const t = findTopic(s, topicId);
@@ -318,7 +408,7 @@ export function createService(deps: ServiceDeps) {
      * stays open and is simply no longer linked.
      */
     deleteTopic(topicId: string): Promise<void> {
-      return queue.run(async () => {
+      return run(async () => {
         findTopic(await repo.read(), topicId);
         const links = await linkStore.read();
         const windowId = windowForTopic(links, topicId);
@@ -349,7 +439,7 @@ export function createService(deps: ServiceDeps) {
 
     /** Brings a topic back from the trash, relinking its window if that is still open and free. */
     undoDelete(topicId: string): Promise<void> {
-      return queue.run(async () => {
+      return run(async () => {
         const store = await repo.read();
         const entry = store.trash.find((e) => e.topic.id === topicId);
         if (!entry) throw new UserError('Deleted topic not found.');

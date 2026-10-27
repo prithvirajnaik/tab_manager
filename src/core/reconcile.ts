@@ -22,6 +22,8 @@ export type ReconcileResult = {
   topic: Topic;
   /** Links for the live tabs of this window. */
   tabLinks: Record<string, string>;
+  /** Saved ids taken over from other topics (tabs dragged into this window). */
+  adopted: string[];
   changed: boolean;
 };
 
@@ -66,6 +68,7 @@ export function reconcileTopic(
   }
 
   const tabLinks: Record<string, string> = {};
+  const adopted = [...assigned.values()].filter((a) => a.foreign).map((a) => a.id);
   const tabs = live.map((t) => {
     // Every live tab was assigned in pass 1 or 2.
     const a = assigned.get(t.id) ?? { id: opts.newId(), previous: undefined, foreign: false };
@@ -95,6 +98,7 @@ export function reconcileTopic(
   return {
     topic: changed ? { ...topic, tabs, recentlyClosed, updatedAt: opts.now } : topic,
     tabLinks,
+    adopted,
     changed,
   };
 }
