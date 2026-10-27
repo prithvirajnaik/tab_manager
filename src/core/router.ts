@@ -25,8 +25,7 @@ export async function handleMessage(
       case 'openTopic':
         return { ok: true, data: await service.openTopic(cmd.topicId) };
       case 'parkTopic':
-        await service.parkTopic(cmd.topicId);
-        return { ok: true };
+        return { ok: true, data: await service.parkTopic(cmd.topicId) };
       case 'restoreTab':
         await service.restoreTab(cmd.topicId, cmd.tabId, cmd.from);
         return { ok: true };

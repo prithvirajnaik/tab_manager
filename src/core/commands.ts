@@ -233,7 +233,7 @@ export function createService(deps: ServiceDeps) {
      * Saves the topic's window one last time, unlinks it and closes it. Tabs that could not be
      * saved (blob: pages, say) stay open in the now unlinked window instead of being closed.
      */
-    parkTopic(topicId: string): Promise<void> {
+    parkTopic(topicId: string): Promise<{ leftOpen: number }> {
       return queue.run(async () => {
         findTopic(await repo.read(), topicId);
         await syncLinked();
@@ -245,7 +245,7 @@ export function createService(deps: ServiceDeps) {
           return s;
         });
         if (stale !== null && windowId === null) await linkStore.write(unbindWindow(links, stale));
-        if (windowId === null) return;
+        if (windowId === null) return { leftOpen: 0 };
         const tabs = await browser.listTabs(windowId);
         await linkStore.write(
           unbindWindow(
@@ -259,6 +259,7 @@ export function createService(deps: ServiceDeps) {
         );
         if (unsaved.length === 0) await browser.removeWindow(windowId);
         else await browser.removeTabs(tabs.filter((t) => !unsaved.includes(t)).map((t) => t.id));
+        return { leftOpen: unsaved.length };
       });
     },
 
@@ -328,7 +329,8 @@ export function createService(deps: ServiceDeps) {
             const cutoff = at - TRASH_DAYS * DAY;
             s.topics = s.topics.filter((t) => t.id !== topicId);
             s.trash = [
-              { topic: { ...topic, windowId: null }, deletedAt: at },
+              // windowId is kept so Undo can relink the window if it is still open.
+              { topic: { ...topic, windowId }, deletedAt: at },
               ...s.trash.filter((e) => e.deletedAt >= cutoff),
             ];
             return s;
@@ -340,16 +342,33 @@ export function createService(deps: ServiceDeps) {
       });
     },
 
+    /** Brings a topic back from the trash, relinking its window if that is still open and free. */
     undoDelete(topicId: string): Promise<void> {
       return queue.run(async () => {
+        const store = await repo.read();
+        const entry = store.trash.find((e) => e.topic.id === topicId);
+        if (!entry) throw new UserError('Deleted topic not found.');
+        const restoredId = store.topics.some((t) => t.id === topicId) ? newId() : topicId;
+        const links = await linkStore.read();
+        const previous = entry.topic.windowId;
+        const relink =
+          previous !== null &&
+          links.windows[String(previous)] === undefined &&
+          (await browser.listWindowIds()).includes(previous)
+            ? previous
+            : null;
         await repo.update((s) => {
-          const entry = s.trash.find((e) => e.topic.id === topicId);
-          if (!entry) throw new UserError('Deleted topic not found.');
-          const clash = s.topics.some((t) => t.id === topicId);
-          s.trash = s.trash.filter((e) => e !== entry);
-          s.topics.push({ ...entry.topic, id: clash ? newId() : topicId, windowId: null });
+          s.trash = s.trash.filter((e) => e.topic.id !== topicId);
+          s.topics.push({ ...entry.topic, id: restoredId, windowId: relink });
           return s;
         });
+        if (relink !== null) {
+          await linkStore.write({
+            ...links,
+            windows: { ...links.windows, [String(relink)]: restoredId },
+          });
+          await syncLinked();
+        }
       });
     },
   };

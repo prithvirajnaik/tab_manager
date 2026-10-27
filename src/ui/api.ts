@@ -27,6 +27,8 @@ export async function loadStore(): Promise<LoadResult> {
   return parseStore(raw);
 }
 
+let faviconBase: string | undefined;
+
 export const chromeApi: Api = {
   async send(command) {
     try {
@@ -46,10 +48,8 @@ export const chromeApi: Api = {
   },
   favicon(pageUrl) {
     // The browser's favicon cache: no network requests from this page.
-    const url = new URL(chrome.runtime.getURL('/_favicon/'));
-    url.searchParams.set('pageUrl', pageUrl);
-    url.searchParams.set('size', '32');
-    return url.toString();
+    faviconBase ??= chrome.runtime.getURL('/_favicon/');
+    return `${faviconBase}?${new URLSearchParams({ pageUrl, size: '32' }).toString()}`;
   },
   async currentWindowId() {
     try {

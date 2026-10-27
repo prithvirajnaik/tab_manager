@@ -28,6 +28,11 @@ test('save this window from the new tab page, rename it, delete and undo', async
   await input.press('Enter');
   await expect(page.getByRole('heading', { name: '日本語' })).toBeVisible();
 
+  await page.getByRole('button', { name: 'Rename 日本語' }).click();
+  await page.getByLabel('New name for 日本語').fill('Cancelled');
+  await page.getByLabel('New name for 日本語').press('Escape');
+  await expect(page.getByRole('heading', { name: '日本語' })).toBeVisible();
+
   await page.getByRole('button', { name: 'Delete 日本語' }).click();
   await expect(page.getByRole('heading', { name: '日本語' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Undo' }).click();
@@ -54,10 +59,10 @@ test('park and open from the new tab page', async ({ ext, site }) => {
   const card = page.getByRole('article', { name: 'Focus' });
   const badge = card.locator('.badge');
   await expect(badge).toHaveText('Open');
-  await card.getByRole('button', { name: 'Park' }).click();
+  await card.getByRole('button', { name: 'Park Focus' }).click();
   await expect(badge).toHaveText('Saved');
 
-  await card.getByRole('button', { name: 'Open' }).click();
+  await card.getByRole('button', { name: 'Open Focus' }).click();
   await expect(badge).toHaveText('Open');
   const store = await readStore(ext);
   expect(store.topics[0]!.windowId).not.toBeNull();
@@ -101,11 +106,9 @@ test('renders 50 topics promptly after a single storage read', async ({
   const page = await context.newPage();
   await page.goto(`chrome-extension://${extensionId}/newtab.html`);
   await expect(page.getByRole('article')).toHaveCount(50);
-  const ms = await page.evaluate(() => {
-    const first = document.querySelector('article');
-    const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
-    return first ? performance.now() - nav.startTime : Infinity;
-  });
-  // Measured to the moment the assertion saw 50 cards; generous for CI machines.
-  expect(ms).toBeLessThan(3000);
+  // Time from navigation start to the render call that follows the single storage read.
+  const ms = await page.evaluate(
+    () => performance.getEntriesByName('tab-topics:rendered')[0]?.startTime ?? Infinity,
+  );
+  expect(ms).toBeLessThan(1000);
 });

@@ -7,7 +7,7 @@ describe('parkTopic with tabs that cannot be saved', () => {
     const topic = await service.saveWindow(windowId, 'A');
     const blob = browser.addTab(windowId, { url: 'blob:https://a/123' });
 
-    await service.parkTopic(topic.id);
+    expect(await service.parkTopic(topic.id)).toEqual({ leftOpen: 1 });
 
     expect(browser.windows.has(windowId)).toBe(true);
     expect((await browser.listTabs(windowId)).map((t) => t.id)).toEqual([blob]);

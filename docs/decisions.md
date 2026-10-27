@@ -54,6 +54,9 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **`favicon` permission added.** Favicons render from the browser's cache (`/_favicon/?pageUrl=...`), so the new tab page makes no network requests to the sites in your topics.
 - **The page reads storage once and renders.** It then subscribes to `storage.onChanged` and asks for its own window id after first paint, to label "This window".
 - **Topics are listed in creation order.** Ordering by last update would make cards jump while you browse.
-- **Delete is undoable twice over.** Delete moves the topic to `trash` (kept 30 days) after a snapshot, and the toast offers Undo for 10 seconds. If the deleted topic's window is open, it stays open, simply unlinked.
+- **Delete moves the topic to `trash`** (kept 30 days) after a snapshot; the toast offers Undo, and its timer pauses while hovered or focused. The deleted topic's window stays open, unlinked. Undo relinks that window if it is still open and not linked to another topic. A Trash list in the UI (to restore after the toast is gone) is deferred to phase 7, with the other recovery screens.
 - **Components take an injected `Api`** (`src/ui/api.ts`), so component tests run in jsdom without `chrome.*`.
 - **Opening a topic reports tabs that could not be opened** in a toast, and the card lists Parked and Recently closed tabs with Restore buttons.
+- **Cards are memoised** with stable actions and a minute-granular clock, and tab lists render only while their `<details>` is open, so per-event storage writes in phase 4 do not redraw 50 x 20 rows.
+- **Rename commits once.** Enter or Escape settles the edit, so the blur that follows is ignored; focus returns to the Rename button.
+- **Render timing is measured with a `performance.mark`** placed right after the render call, and a unit test asserts `loadStore` reads storage exactly once.

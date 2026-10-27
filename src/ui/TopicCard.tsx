@@ -1,5 +1,7 @@
-import { useState } from 'preact/hooks';
-import type { Topic } from '../core/model';
+import type { ComponentChildren } from 'preact';
+import { memo } from 'preact/compat';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import type { ClosedTab, ParkedTab, SavedTab, Topic } from '../core/model';
 import { hostOf, plural, timeAgo } from './format';
 
 export type TopicActions = {
@@ -21,20 +23,77 @@ type Props = {
 
 const MAX_ICONS = 12;
 
-export function TopicCard({ topic, isCurrentWindow, busy, now, favicon, actions }: Props) {
+/** A <details> whose list is only rendered while open, so closed cards stay cheap. */
+function Disclosure({ summary, children }: { summary: string; children: () => ComponentChildren }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details class="tabs" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{summary}</summary>
+      {open && <ul>{children()}</ul>}
+    </details>
+  );
+}
+
+type TabRowProps = {
+  tab: SavedTab;
+  favicon?: (url: string) => string;
+  meta: string;
+  action?: ComponentChildren;
+};
+
+function TabRow({ tab, favicon, meta, action }: TabRowProps) {
+  return (
+    <li class="tab" title={tab.url}>
+      {favicon && <img src={favicon(tab.url)} alt="" width={16} height={16} loading="lazy" />}
+      <span class="tab__title">{tab.title || tab.url}</span>
+      {tab.pinned && <span class="tab__flag">pinned</span>}
+      <span class="tab__host">{meta}</span>
+      {action}
+    </li>
+  );
+}
+
+function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(topic.name);
+  // Set once Enter/Escape has handled the edit, so the blur that follows does nothing.
+  const settled = useRef(false);
+  const renameButton = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
   const isOpen = topic.windowId !== null;
   const headingId = `topic-${topic.id}`;
 
-  const commit = () => {
-    setEditing(false);
-    if (draft.trim() && draft.trim() !== topic.name) actions.rename(topic.id, draft);
+  useEffect(() => {
+    if (wasEditing.current && !editing) renameButton.current?.focus();
+    wasEditing.current = editing;
+  }, [editing]);
+
+  const finish = (save: boolean) => {
+    if (settled.current) return;
+    settled.current = true;
+    const name = draft.trim();
+    if (save && name && name !== topic.name) actions.rename(topic.id, name);
     else setDraft(topic.name);
+    setEditing(false);
   };
 
+  const restoreButton = (t: ClosedTab | ParkedTab, from: 'recentlyClosed' | 'parked') => (
+    <button
+      type="button"
+      class="btn btn--small"
+      disabled={busy}
+      aria-label={`Restore ${t.title || t.url}`}
+      onClick={() => actions.restore(topic.id, t.id, from)}
+    >
+      Restore
+    </button>
+  );
+
   return (
-    <article class={`card${isOpen ? ' card--open' : ''}`} aria-labelledby={headingId}>
+    <article
+      class={`card${isOpen ? ' card--open' : ''}`}
+      {...(editing ? { 'aria-label': topic.name } : { 'aria-labelledby': headingId })}
+    >
       <header class="card__head">
         {editing ? (
           <input
@@ -44,13 +103,10 @@ export function TopicCard({ topic, isCurrentWindow, busy, now, favicon, actions 
             maxLength={200}
             autoFocus
             onInput={(e) => setDraft(e.currentTarget.value)}
-            onBlur={commit}
+            onBlur={() => finish(true)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') commit();
-              if (e.key === 'Escape') {
-                setDraft(topic.name);
-                setEditing(false);
-              }
+              if (e.key === 'Enter') finish(true);
+              if (e.key === 'Escape') finish(false);
             }}
           />
         ) : (
@@ -85,21 +141,30 @@ export function TopicCard({ topic, isCurrentWindow, busy, now, favicon, actions 
           type="button"
           class="btn btn--primary"
           disabled={busy}
+          aria-label={`${isOpen ? 'Switch to' : 'Open'} ${topic.name}`}
           onClick={() => actions.open(topic.id)}
         >
           {isOpen ? 'Switch to' : 'Open'}
         </button>
         {isOpen && (
-          <button type="button" class="btn" disabled={busy} onClick={() => actions.park(topic.id)}>
+          <button
+            type="button"
+            class="btn"
+            disabled={busy}
+            aria-label={`Park ${topic.name}`}
+            onClick={() => actions.park(topic.id)}
+          >
             Park
           </button>
         )}
         <button
+          ref={renameButton}
           type="button"
           class="btn btn--quiet"
           disabled={busy}
           aria-label={`Rename ${topic.name}`}
           onClick={() => {
+            settled.current = false;
             setDraft(topic.name);
             setEditing(true);
           }}
@@ -118,66 +183,46 @@ export function TopicCard({ topic, isCurrentWindow, busy, now, favicon, actions 
       </div>
 
       {topic.tabs.length > 0 && (
-        <details class="tabs">
-          <summary>Tabs</summary>
-          <ul>
-            {topic.tabs.map((t) => (
-              <li key={t.id} class="tab" title={t.url}>
-                <img src={favicon(t.url)} alt="" width={16} height={16} loading="lazy" />
-                <span class="tab__title">{t.title || t.url}</span>
-                {t.pinned && <span class="tab__flag">pinned</span>}
-                <span class="tab__host">{hostOf(t.url)}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
+        <Disclosure summary="Tabs">
+          {() =>
+            topic.tabs.map((t) => (
+              <TabRow key={t.id} tab={t} favicon={favicon} meta={hostOf(t.url)} />
+            ))
+          }
+        </Disclosure>
       )}
 
       {topic.parked.length > 0 && (
-        <details class="tabs">
-          <summary>Parked ({topic.parked.length})</summary>
-          <ul>
-            {topic.parked.map((t) => (
-              <li key={t.id} class="tab" title={t.url}>
-                <span class="tab__title">{t.title || t.url}</span>
-                <span class="tab__host">{timeAgo(t.parkedAt, now)}</span>
-                <button
-                  type="button"
-                  class="btn btn--small"
-                  disabled={busy}
-                  aria-label={`Restore ${t.title || t.url}`}
-                  onClick={() => actions.restore(topic.id, t.id, 'parked')}
-                >
-                  Restore
-                </button>
-              </li>
-            ))}
-          </ul>
-        </details>
+        <Disclosure summary={`Parked (${topic.parked.length})`}>
+          {() =>
+            topic.parked.map((t) => (
+              <TabRow
+                key={t.id}
+                tab={t}
+                meta={timeAgo(t.parkedAt, now)}
+                action={restoreButton(t, 'parked')}
+              />
+            ))
+          }
+        </Disclosure>
       )}
 
       {topic.recentlyClosed.length > 0 && (
-        <details class="tabs">
-          <summary>Recently closed ({topic.recentlyClosed.length})</summary>
-          <ul>
-            {topic.recentlyClosed.map((t) => (
-              <li key={t.id} class="tab" title={t.url}>
-                <span class="tab__title">{t.title || t.url}</span>
-                <span class="tab__host">{timeAgo(t.closedAt, now)}</span>
-                <button
-                  type="button"
-                  class="btn btn--small"
-                  disabled={busy}
-                  aria-label={`Restore ${t.title || t.url}`}
-                  onClick={() => actions.restore(topic.id, t.id, 'recentlyClosed')}
-                >
-                  Restore
-                </button>
-              </li>
-            ))}
-          </ul>
-        </details>
+        <Disclosure summary={`Recently closed (${topic.recentlyClosed.length})`}>
+          {() =>
+            topic.recentlyClosed.map((t) => (
+              <TabRow
+                key={t.id}
+                tab={t}
+                meta={timeAgo(t.closedAt, now)}
+                action={restoreButton(t, 'recentlyClosed')}
+              />
+            ))
+          }
+        </Disclosure>
       )}
     </article>
   );
 }
+
+export const TopicCard = memo(TopicCardImpl);

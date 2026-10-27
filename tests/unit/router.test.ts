@@ -45,7 +45,10 @@ describe('handleMessage', () => {
     const saved = await handleMessage(service, { type: 'saveWindow', name: 'A', windowId }, own);
     const topicId = (saved as { data: { topicId: string } }).data.topicId;
     expect(await handleMessage(service, { type: 'sync' }, own)).toEqual({ ok: true });
-    expect(await handleMessage(service, { type: 'parkTopic', topicId }, own)).toEqual({ ok: true });
+    expect(await handleMessage(service, { type: 'parkTopic', topicId }, own)).toEqual({
+      ok: true,
+      data: { leftOpen: 0 },
+    });
     expect(await handleMessage(service, { type: 'openTopic', topicId }, own)).toEqual({
       ok: true,
       data: { failed: 0 },

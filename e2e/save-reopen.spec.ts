@@ -20,7 +20,10 @@ test('save, park and reopen restores the same URLs and pinned state', async ({ e
     [urls[2], false],
   ]);
 
-  expect(await send(ext, { type: 'parkTopic', topicId })).toEqual({ ok: true });
+  expect(await send(ext, { type: 'parkTopic', topicId })).toEqual({
+    ok: true,
+    data: { leftOpen: 0 },
+  });
   await expect.poll(() => windowExists(ext, windowId)).toBe(false);
   store = await readStore(ext);
   expect(store.topics[0]!.windowId).toBeNull();

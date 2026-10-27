@@ -16,7 +16,7 @@ describe('renameTopic', () => {
 });
 
 describe('deleteTopic and undoDelete', () => {
-  it('moves a topic to the trash, unlinks its window without closing it, and undo restores it', async () => {
+  it('moves a topic to the trash, unlinks its window without closing it, and undo relinks it', async () => {
     const { browser, service, repo, links } = setup();
     const { windowId } = browser.open(['https://a/', 'https://b/']);
     const t = await service.saveWindow(windowId, 'Doomed');
@@ -32,8 +32,36 @@ describe('deleteTopic and undoDelete', () => {
     await service.undoDelete(t.id);
     store = await repo.read();
     expect(store.trash).toEqual([]);
-    expect(store.topics[0]).toMatchObject({ id: t.id, name: 'Doomed', windowId: null });
+    expect(store.topics[0]).toMatchObject({ id: t.id, name: 'Doomed', windowId });
     expect(store.topics[0]?.tabs.map((x) => x.url)).toEqual(['https://a/', 'https://b/']);
+    expect((await links.read()).windows[windowId]).toBe(t.id);
+
+    // Still live-linked after undo.
+    browser.addTab(windowId, { url: 'https://c/' });
+    await service.syncAll();
+    expect((await repo.read()).topics[0]?.tabs.map((x) => x.url)).toEqual([
+      'https://a/',
+      'https://b/',
+      'https://c/',
+    ]);
+  });
+
+  it('restores unlinked when the window closed or was saved as another topic meanwhile', async () => {
+    const { browser, service, repo } = setup();
+    const w1 = browser.open(['https://a/']).windowId;
+    const w2 = browser.open(['https://b/']).windowId;
+    const a = await service.saveWindow(w1, 'A');
+    const b = await service.saveWindow(w2, 'B');
+    await service.deleteTopic(a.id);
+    await service.deleteTopic(b.id);
+    browser.closeWindow(w1);
+    await service.saveWindow(w2, 'B2');
+    await service.undoDelete(a.id);
+    await service.undoDelete(b.id);
+    const topics = (await repo.read()).topics;
+    expect(topics.find((t) => t.name === 'A')?.windowId).toBeNull();
+    expect(topics.find((t) => t.name === 'B')?.windowId).toBeNull();
+    expect(topics.find((t) => t.name === 'B2')?.windowId).toBe(w2);
   });
 
   it('purges trash entries older than 30 days on the next delete', async () => {
