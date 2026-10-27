@@ -46,9 +46,9 @@ describe('toSavedTab', () => {
     expect(tab.favIconUrl).toBeUndefined();
   });
 
-  it('keeps the newest of saved, browser and active times', () => {
+  it('keeps the newer of saved and browser times, falling back to now', () => {
     expect(toSavedTab(live({ lastAccessed: 50 }), 's', 100).lastActiveAt).toBe(50);
-    expect(toSavedTab(live({ active: true }), 's', 100).lastActiveAt).toBe(100);
+    expect(toSavedTab(live({ active: true, lastAccessed: 50 }), 's', 100).lastActiveAt).toBe(50);
     const prev = { id: 's', url: 'x', title: 'old', pinned: false, lastActiveAt: 70 };
     expect(toSavedTab(live({ lastAccessed: 50 }), 's', 100, prev).lastActiveAt).toBe(70);
     expect(toSavedTab(live({ lastAccessed: undefined }), 's', 100).lastActiveAt).toBe(100);

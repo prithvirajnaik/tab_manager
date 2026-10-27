@@ -26,7 +26,10 @@ test('save, park and reopen restores the same URLs and pinned state', async ({ e
   expect(store.topics[0]!.windowId).toBeNull();
   expect(store.topics[0]!.tabs.map((t) => t.url)).toEqual(urls);
 
-  expect(await send(ext, { type: 'openTopic', topicId })).toEqual({ ok: true });
+  expect(await send(ext, { type: 'openTopic', topicId })).toEqual({
+    ok: true,
+    data: { failed: 0 },
+  });
   store = await readStore(ext);
   const reopened = store.topics[0]!.windowId!;
   expect(reopened).not.toBeNull();
@@ -48,8 +51,29 @@ test('opening a topic that is already open focuses it instead of duplicating', a
   const before = await count();
   expect(await send(ext, { type: 'openTopic', topicId: saved.data!.topicId })).toEqual({
     ok: true,
+    data: { failed: 0 },
   });
   expect(await count()).toBe(before);
+});
+
+test('closing the window by hand keeps the topic, and it reopens intact', async ({ ext, site }) => {
+  const urls = [site.url('x'), site.url('y')];
+  const { windowId } = await openWindow(ext, [{ url: urls[0]!, pinned: true }, { url: urls[1]! }]);
+  const saved = await send<{ topicId: string }>(ext, { type: 'saveWindow', name: 'X', windowId });
+  await ext.evaluate((id) => chrome.windows.remove(id), windowId);
+  await expect.poll(() => windowExists(ext, windowId)).toBe(false);
+
+  expect(await send(ext, { type: 'openTopic', topicId: saved.data!.topicId })).toEqual({
+    ok: true,
+    data: { failed: 0 },
+  });
+  const store = await readStore(ext);
+  const reopened = store.topics[0]!.windowId!;
+  expect(reopened).not.toBe(windowId);
+  expect((await windowTabs(ext, reopened)).map((t) => [t.url, t.pinned])).toEqual([
+    [urls[0], true],
+    [urls[1], false],
+  ]);
 });
 
 test('rejects commands that fail validation', async ({ ext }) => {

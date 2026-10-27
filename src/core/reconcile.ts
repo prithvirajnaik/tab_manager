@@ -88,7 +88,7 @@ export function reconcileTopic(
   const recentlyClosed = [...closed, ...topic.recentlyClosed].filter((c) => c.closedAt >= cutoff);
 
   const changed =
-    JSON.stringify(tabs) !== JSON.stringify(topic.tabs) ||
+    canonical(tabs) !== canonical(topic.tabs) ||
     recentlyClosed.length !== topic.recentlyClosed.length ||
     closed.length > 0;
 
@@ -97,4 +97,13 @@ export function reconcileTopic(
     tabLinks,
     changed,
   };
+}
+
+/** JSON with sorted keys, so key order (ours vs. zod's) never reads as a change. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
 }

@@ -8,6 +8,7 @@ export default tseslint.config(
   ...tseslint.configs.strict,
   prettier,
   {
+    files: ['src/core/links.ts', 'src/core/commands.ts'],
     rules: {
       // Records keyed by browser ids are the natural shape for session links.
       '@typescript-eslint/no-dynamic-delete': 'off',

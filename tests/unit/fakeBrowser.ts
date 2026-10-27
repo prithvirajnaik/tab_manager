@@ -13,6 +13,8 @@ export class FakeBrowser implements BrowserPort {
   groups = new Map<number, LiveGroup>();
   clock = () => 1_000_000;
   calls: string[] = [];
+  /** URLs the browser refuses to open, as with file: URLs and no file access. */
+  failUrls = new Set<string>();
 
   id() {
     return this.nextId++;
@@ -123,12 +125,17 @@ export class FakeBrowser implements BrowserPort {
 
   async createWindow(tabs: NewTab[]) {
     this.calls.push(`createWindow(${tabs.length})`);
-    const { windowId, tabIds } = this.open(
-      tabs.length
-        ? tabs.map((t, i) => ({ url: t.url, title: t.url, pinned: t.pinned, active: i === 0 }))
-        : [{ url: 'chrome://newtab/', active: true }],
+    const {
+      windowId,
+      tabIds: [placeholder],
+    } = this.open([{ url: 'chrome://newtab/', active: true }]);
+    const tabIds = tabs.map((t, i) =>
+      this.failUrls.has(t.url)
+        ? -1
+        : this.addTab(windowId, { url: t.url, title: t.url, pinned: t.pinned, active: i === 0 }),
     );
-    return { windowId, tabIds: tabs.length ? tabIds : [] };
+    if (tabIds.some((id) => id >= 0) && placeholder !== undefined) this.closeTab(placeholder);
+    return { windowId, tabIds };
   }
 
   async createTab(windowId: number, tab: NewTab & { index?: number }) {

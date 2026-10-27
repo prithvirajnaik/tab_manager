@@ -4,7 +4,7 @@ import type { BrowserPort, Clock, LiveTab } from './ports';
 import { createWriteQueue } from './queue';
 import { reconcileTopic } from './reconcile';
 import type { Repo } from './repo';
-import { isSaveable, openOrder, toSavedTab } from './tabs';
+import { isBlankPage, isSaveable, openOrder, toSavedTab } from './tabs';
 
 /** An error whose message is safe and useful to show to the user. */
 export class UserError extends Error {
@@ -52,15 +52,41 @@ export function createService(deps: ServiceDeps) {
   /** Brings every linked topic in line with its window. Must run inside the queue. */
   async function syncLinked(): Promise<void> {
     const links = await linkStore.read();
-    const windowIds = new Set(await browser.listWindowIds());
+    const openWindows = new Set(await browser.listWindowIds());
     const live = await browser.listTabs();
     const byWindow = new Map<number, LiveTab[]>();
-    for (const t of live) byWindow.set(t.windowId, [...(byWindow.get(t.windowId) ?? []), t]);
+    for (const t of live) {
+      const list = byWindow.get(t.windowId);
+      if (list) list.push(t);
+      else byWindow.set(t.windowId, [t]);
+    }
 
     const nextLinks: Links = { ...links, windows: { ...links.windows }, tabs: {} };
     await repo.update((store) => {
+      const topicIds = new Set(store.topics.map((t) => t.id));
+      // Windows that will be reconciled: open, not closing, linked to an existing topic.
+      const adopting = new Set<number>();
+      for (const [w, topicId] of Object.entries(links.windows)) {
+        const windowId = Number(w);
+        if (
+          topicIds.has(topicId) &&
+          openWindows.has(windowId) &&
+          !links.closing.includes(windowId)
+        ) {
+          adopting.add(windowId);
+        }
+      }
+      // savedId -> the window whose topic will adopt it. Only saveable tabs are adopted.
+      const adoptedIn = new Map<string, number>();
+      for (const t of live) {
+        const savedId = links.tabs[String(t.id)];
+        if (savedId && adopting.has(t.windowId) && isSaveable(t.url, ownNewTabUrl)) {
+          adoptedIn.set(savedId, t.windowId);
+        }
+      }
       const foreign = new Map<string, SavedTab>();
       for (const t of store.topics) for (const s of t.tabs) foreign.set(s.id, s);
+      const liveOwner = new Map<string, string>();
 
       for (const [w, topicId] of Object.entries(links.windows)) {
         const windowId = Number(w);
@@ -71,19 +97,15 @@ export function createService(deps: ServiceDeps) {
           delete nextLinks.windows[w];
           continue;
         }
-        if (!windowIds.has(windowId)) {
+        if (!openWindows.has(windowId)) {
           // The window closed with its tabs: the topic keeps them, now unlinked.
           delete nextLinks.windows[w];
           if (topic.windowId === windowId) store.topics[index] = { ...topic, windowId: null };
           continue;
         }
         const elsewhere = new Set<string>();
-        for (const t of live) {
-          const savedId = links.tabs[String(t.id)];
-          if (savedId && t.windowId !== windowId && links.windows[String(t.windowId)]) {
-            elsewhere.add(savedId);
-          }
-        }
+        for (const [savedId, adopter] of adoptedIn)
+          if (adopter !== windowId) elsewhere.add(savedId);
         const result = reconcileTopic(topic, byWindow.get(windowId) ?? [], {
           now: now(),
           newId,
@@ -93,9 +115,17 @@ export function createService(deps: ServiceDeps) {
           foreign,
         });
         Object.assign(nextLinks.tabs, result.tabLinks);
+        for (const s of result.topic.tabs) liveOwner.set(s.id, topicId);
         store.topics[index] =
           result.topic.windowId === windowId ? result.topic : { ...result.topic, windowId };
       }
+
+      // A tab open in a linked window belongs to that topic alone, so a tab dragged out of a
+      // window that then closed is not kept in two topics.
+      store.topics = store.topics.map((t) => {
+        const tabs = t.tabs.filter((s) => (liveOwner.get(s.id) ?? t.id) === t.id);
+        return tabs.length === t.tabs.length ? t : { ...t, tabs, updatedAt: now() };
+      });
       return store;
     });
     await linkStore.write(nextLinks);
@@ -106,6 +136,9 @@ export function createService(deps: ServiceDeps) {
     saveWindow(windowId: number, name: string): Promise<Topic> {
       return queue.run(async () => {
         const topicName = cleanName(name);
+        if (!(await browser.listWindowIds()).includes(windowId)) {
+          throw new UserError('That window is no longer open.');
+        }
         const links = await linkStore.read();
         const existing = links.windows[String(windowId)];
         if (existing) {
@@ -144,8 +177,11 @@ export function createService(deps: ServiceDeps) {
       });
     },
 
-    /** Focuses the topic's window, or opens the topic in a new window. */
-    openTopic(topicId: string): Promise<void> {
+    /**
+     * Focuses the topic's window, or opens the topic in a new window. Tabs the browser refuses
+     * to open move to the topic's Parked list, where they are kept without expiring.
+     */
+    openTopic(topicId: string): Promise<{ failed: number }> {
       return queue.run(async () => {
         const store = await repo.read();
         const topic = findTopic(store, topicId);
@@ -153,16 +189,18 @@ export function createService(deps: ServiceDeps) {
         const open = await liveWindowFor(links, topicId);
         if (open !== null) {
           await browser.focusWindow(open);
-          return;
+          return { failed: 0 };
         }
         const tabs = openOrder(topic.tabs.filter((t) => isOpenableUrl(t.url)));
         const { windowId, tabIds } = await browser.createWindow(
           tabs.map((t) => ({ url: t.url, pinned: t.pinned })),
         );
         const tabLinks: Record<string, string> = {};
-        tabIds.forEach((id, i) => {
-          const saved = tabs[i];
-          if (saved) tabLinks[String(id)] = saved.id;
+        const failed = new Set<string>();
+        tabs.forEach((saved, i) => {
+          const id = tabIds[i];
+          if (id === undefined || id < 0) failed.add(saved.id);
+          else tabLinks[String(id)] = saved.id;
         });
         const stale = windowForTopic(links, topicId);
         const base = stale === null ? links : unbindWindow(links, stale);
@@ -171,15 +209,28 @@ export function createService(deps: ServiceDeps) {
           windows: { ...base.windows, [String(windowId)]: topicId },
           tabs: { ...base.tabs, ...tabLinks },
         });
+        const at = now();
         await repo.update((s) => {
           const t = findTopic(s, topicId);
           t.windowId = windowId;
+          if (failed.size) {
+            t.parked = [
+              ...t.tabs.filter((x) => failed.has(x.id)).map((x) => ({ ...x, parkedAt: at })),
+              ...t.parked,
+            ];
+            t.tabs = t.tabs.filter((x) => !failed.has(x.id));
+            t.updatedAt = at;
+          }
           return s;
         });
+        return { failed: failed.size };
       });
     },
 
-    /** Saves the topic's window one last time, unlinks it and closes it. */
+    /**
+     * Saves the topic's window one last time, unlinks it and closes it. Tabs that could not be
+     * saved (blob: pages, say) stay open in the now unlinked window instead of being closed.
+     */
     parkTopic(topicId: string): Promise<void> {
       return queue.run(async () => {
         findTopic(await repo.read(), topicId);
@@ -193,12 +244,19 @@ export function createService(deps: ServiceDeps) {
         });
         if (stale !== null && windowId === null) await linkStore.write(unbindWindow(links, stale));
         if (windowId === null) return;
-        const tabIds = (await browser.listTabs(windowId)).map((t) => t.id);
-        // Mark the window as closing first so its tab removals are not read as closes.
+        const tabs = await browser.listTabs(windowId);
         await linkStore.write(
-          unbindWindow({ ...links, closing: [...links.closing, windowId] }, windowId, tabIds),
+          unbindWindow(
+            links,
+            windowId,
+            tabs.map((t) => t.id),
+          ),
         );
-        await browser.removeWindow(windowId);
+        const unsaved = tabs.filter(
+          (t) => !isSaveable(t.url, ownNewTabUrl) && !isBlankPage(t.url, ownNewTabUrl),
+        );
+        if (unsaved.length === 0) await browser.removeWindow(windowId);
+        else await browser.removeTabs(tabs.filter((t) => !unsaved.includes(t)).map((t) => t.id));
       });
     },
 

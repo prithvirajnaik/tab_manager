@@ -1,5 +1,5 @@
 import { handleMessage } from '../../src/core/router';
-import { setup } from './commands.test';
+import { setup } from './setup';
 
 const own = { isOwnExtension: true, windowId: undefined as number | undefined };
 
@@ -46,7 +46,10 @@ describe('handleMessage', () => {
     const topicId = (saved as { data: { topicId: string } }).data.topicId;
     expect(await handleMessage(service, { type: 'sync' }, own)).toEqual({ ok: true });
     expect(await handleMessage(service, { type: 'parkTopic', topicId }, own)).toEqual({ ok: true });
-    expect(await handleMessage(service, { type: 'openTopic', topicId }, own)).toEqual({ ok: true });
+    expect(await handleMessage(service, { type: 'openTopic', topicId }, own)).toEqual({
+      ok: true,
+      data: { failed: 0 },
+    });
     expect(
       await handleMessage(
         service,
@@ -66,7 +69,7 @@ describe('handleMessage', () => {
     const res = await handleMessage(service, { type: 'saveWindow', name: 'A', windowId }, own);
     expect(res).toEqual({
       ok: false,
-      error: 'Something went wrong. Your saved topics were not changed.',
+      error: 'Something went wrong. Please try again.',
     });
     spy.mockRestore();
   });

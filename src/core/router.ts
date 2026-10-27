@@ -23,8 +23,7 @@ export async function handleMessage(
         return { ok: true, data: { topicId: topic.id } };
       }
       case 'openTopic':
-        await service.openTopic(cmd.topicId);
-        return { ok: true };
+        return { ok: true, data: await service.openTopic(cmd.topicId) };
       case 'parkTopic':
         await service.parkTopic(cmd.topicId);
         return { ok: true };
@@ -40,6 +39,6 @@ export async function handleMessage(
       return { ok: false, error: e.message };
     }
     console.error('[tab-topics] command failed', cmd.type, e);
-    return { ok: false, error: 'Something went wrong. Your saved topics were not changed.' };
+    return { ok: false, error: 'Something went wrong. Please try again.' };
   }
 }

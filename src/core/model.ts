@@ -19,6 +19,8 @@ const ALLOWED_PROTOCOLS = new Set([
   'about:',
   'chrome-extension:',
   'view-source:',
+  'ipfs:',
+  'ipns:',
 ]);
 
 /**

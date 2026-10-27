@@ -10,14 +10,17 @@ const BLANK_PAGES = new Set([
   'edge://newtab/',
 ]);
 
+/** New tab pages, including this extension's own: never saved, safe to close. */
+export function isBlankPage(url: string, ownNewTabUrl: string): boolean {
+  return BLANK_PAGES.has(url) || (ownNewTabUrl !== '' && url.startsWith(ownNewTabUrl));
+}
+
 /**
  * Whether a live tab is worth saving. New tab pages (including this extension's own) and
  * URLs with blocked schemes are skipped.
  */
 export function isSaveable(url: string, ownNewTabUrl: string): boolean {
-  if (BLANK_PAGES.has(url)) return false;
-  if (ownNewTabUrl && url.startsWith(ownNewTabUrl)) return false;
-  return isOpenableUrl(url);
+  return !isBlankPage(url, ownNewTabUrl) && isOpenableUrl(url);
 }
 
 export function toSavedTab(live: LiveTab, id: string, now: number, previous?: SavedTab): SavedTab {
@@ -26,11 +29,8 @@ export function toSavedTab(live: LiveTab, id: string, now: number, previous?: Sa
     url: live.url,
     title: (live.title || previous?.title || live.url).slice(0, MAX_TITLE_LENGTH),
     pinned: live.pinned,
-    lastActiveAt: Math.max(
-      previous?.lastActiveAt ?? 0,
-      live.lastAccessed ?? 0,
-      live.active ? now : 0,
-    ),
+    // Not bumped for the active tab on every sync: that would rewrite storage each time.
+    lastActiveAt: Math.max(previous?.lastActiveAt ?? 0, live.lastAccessed ?? 0),
   };
   // Favicons are rendered from the browser's cache, so an oversized one is not worth keeping.
   const favIconUrl = live.favIconUrl || previous?.favIconUrl;
