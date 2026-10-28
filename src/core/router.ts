@@ -69,6 +69,17 @@ export async function handleMessage(
           ...(cmd.autoParkMode === undefined ? {} : { autoParkMode: cmd.autoParkMode }),
         });
         return { ok: true };
+      case 'exportData':
+        return { ok: true, data: await service.exportData() };
+      case 'importData':
+        return { ok: true, data: await service.importData(cmd.text) };
+      case 'listSnapshots':
+        return { ok: true, data: await service.listSnapshots() };
+      case 'restoreSnapshot':
+        await service.restoreSnapshot(cmd.at);
+        return { ok: true };
+      case 'resetStore':
+        return { ok: true, data: await service.resetStore() };
       case 'moveTab':
         await service.moveTab(cmd.fromTopicId, cmd.tabId, cmd.toTopicId);
         return { ok: true };

@@ -17,6 +17,8 @@ function setup(reply: (c: Command) => CommandResponse = () => ({ ok: true })) {
     subscribe: () => () => undefined,
     favicon: (u) => `fav:${u}`,
     currentTopicId: async () => null,
+    download: () => undefined,
+    rawStore: async () => '{}',
   };
   const s = store({
     topics: [

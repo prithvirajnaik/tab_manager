@@ -4,6 +4,7 @@ import type { Command, CommandResponse } from '../core/messages';
 import { buildIndex, searchTabs } from '../core/search';
 import type { Api, LoadResult } from './api';
 import type { AutoParkResult } from '../core/commands';
+import { BackupPanel, BackupReminder, needsBackup } from './BackupPanel';
 import { ParkingPanel } from './ParkingPanel';
 import { SearchResults } from './SearchResults';
 import type { TopicRef } from './TabsPanel';
@@ -32,6 +33,37 @@ export function keepUnchanged(prev: LoadResult, next: LoadResult): LoadResult {
   return { ok: true, store: { ...next.store, topics } };
 }
 
+/** Shown when stored data cannot be read: save it as-is, or start fresh keeping a backup. */
+function UnreadableActions({
+  onDownload,
+  onReset,
+}: {
+  onDownload: () => void;
+  onReset: () => void;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (confirm) confirmButton.current?.focus();
+  }, [confirm]);
+  return (
+    <div class="panel__row">
+      <button type="button" class="btn" onClick={onDownload}>
+        Download the stored data
+      </button>
+      {confirm ? (
+        <button ref={confirmButton} type="button" class="btn btn--primary" onClick={onReset}>
+          Start fresh (the old data is kept as a backup)
+        </button>
+      ) : (
+        <button type="button" class="btn" onClick={() => setConfirm(true)}>
+          Start fresh…
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function App({ initial, api, now = Date.now }: Props) {
   const [load, setLoad] = useState<LoadResult>(initial);
   const [currentTopicId, setCurrentTopicId] = useState<string | null>(null);
@@ -57,6 +89,23 @@ export function App({ initial, api, now = Date.now }: Props) {
     return () => clearInterval(id);
   }, [now]);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing = target?.closest(
+        'input, textarea, select, [contenteditable="true"], [contenteditable=""]',
+      );
+      if (e.key === '/' && !e.isComposing && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const box = document.getElementById('search');
+        if (box) {
+          e.preventDefault();
+          box.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   // Latest closures behind stable functions, so memoised cards only re-render when their
   // own topic changes.
@@ -84,6 +133,10 @@ export function App({ initial, api, now = Date.now }: Props) {
         setPending((n) => n - 1);
       }
     };
+    const reportRestore = (res: CommandResponse) => {
+      const failed = res.ok ? (res.data as { failed?: number } | undefined)?.failed : 0;
+      if (failed) showToast({ message: `${count(failed)} could not be opened and stayed parked.` });
+    };
     const actions: TopicActions = {
       open: (topicId) =>
         void run({ type: 'openTopic', topicId }).then((res) => {
@@ -103,7 +156,8 @@ export function App({ initial, api, now = Date.now }: Props) {
       group: (topicId, tabIds, sectionName) =>
         void run({ type: 'groupTabs', topicId, tabIds, name: sectionName }),
       ungroup: (topicId, sectionId) => void run({ type: 'ungroupSection', topicId, sectionId }),
-      restoreAllParked: (topicId) => void run({ type: 'restoreAllParked', topicId }),
+      restoreAllParked: (topicId) =>
+        void run({ type: 'restoreAllParked', topicId }).then(reportRestore),
       move: (fromTopicId, tabId, toTopicId) =>
         void run({ type: 'moveTab', fromTopicId, tabId, toTopicId }),
       remove: (topicId) => {
@@ -126,9 +180,54 @@ export function App({ initial, api, now = Date.now }: Props) {
         return res.ok ? (res.data as AutoParkResult).tabs : null;
       },
       restore: (tabId: string) => void run({ type: 'restoreUnsorted', tabId }),
-      restoreAll: () => void run({ type: 'restoreAllParked', topicId: null }),
+      restoreAll: () => void run({ type: 'restoreAllParked', topicId: null }).then(reportRestore),
     };
-    return { run, actions, parking, showToast, startToastTimer, pauseToastTimer };
+    // Local date, so a backup made just before midnight is not dated tomorrow.
+    const dateStamp = () => new Date().toLocaleDateString('sv-SE');
+    const backup = {
+      export: async () => {
+        const res = await run({ type: 'exportData' });
+        if (res.ok) {
+          latest.current.api.download(
+            `tab-topics-${dateStamp()}.json`,
+            (res.data as { text: string }).text,
+          );
+        }
+      },
+      import: async (text: string) => {
+        const res = await run({ type: 'importData', text });
+        if (res.ok) {
+          const { topics, tabs } = res.data as { topics: number; tabs: number };
+          showToast({
+            message: `Imported ${topics === 1 ? '1 topic' : `${topics} topics`} with ${tabs === 1 ? '1 tab' : `${tabs} tabs`}.`,
+          });
+        }
+      },
+      listSnapshots: async () => {
+        const res = await run({ type: 'listSnapshots' });
+        return res.ok ? (res.data as { at: number; topics: number; tabs: number }[]) : null;
+      },
+      restoreSnapshot: (at: number) => void run({ type: 'restoreSnapshot', at }),
+      undoDelete: (topicId: string) => void run({ type: 'undoDelete', topicId }),
+      downloadRaw: async () =>
+        latest.current.api.download(
+          `tab-topics-raw-${dateStamp()}.json`,
+          await latest.current.api.rawStore(),
+        ),
+      reset: () =>
+        void run({ type: 'resetStore' }).then((res) => {
+          if (res.ok) {
+            const key = (res.data as { backupKey?: string } | undefined)?.backupKey;
+            showToast({
+              message: key
+                ? `Started fresh. The old data is kept in storage as "${key}".`
+                : 'Started fresh. The old data is kept in storage as a backup.',
+            });
+          }
+        }),
+      importError: (message: string) => setError(message),
+    };
+    return { run, actions, parking, backup, showToast, startToastTimer, pauseToastTimer };
   }, []);
 
   const topicsForRefs = load.ok ? load.store.topics : [];
@@ -154,6 +253,18 @@ export function App({ initial, api, now = Date.now }: Props) {
           <p>Your saved topics could not be read, so nothing has been changed.</p>
           <p class="notice__detail">{load.error}</p>
         </div>
+        <UnreadableActions
+          onDownload={() => void helpers.backup.downloadRaw()}
+          onReset={helpers.backup.reset}
+        />
+        {error && (
+          <div class="notice notice--error" role="alert">
+            {error}
+          </div>
+        )}
+        <div class="toast-region" role="status" aria-live="polite">
+          {toast && <div class="toast">{toast.message}</div>}
+        </div>
       </main>
     );
   }
@@ -161,7 +272,7 @@ export function App({ initial, api, now = Date.now }: Props) {
   const { topics } = load.store;
   const busy = pending > 0;
   const currentTopic = topics.find((t) => t.id === currentTopicId);
-  const { run, actions, parking, showToast, startToastTimer, pauseToastTimer } = helpers;
+  const { run, actions, parking, backup, showToast, startToastTimer, pauseToastTimer } = helpers;
 
   const save = async (e: Event) => {
     e.preventDefault();
@@ -206,13 +317,19 @@ export function App({ initial, api, now = Date.now }: Props) {
         </div>
       )}
 
+      {needsBackup(load.store.settings.lastExportAt, topics.length > 0, minute) && (
+        <BackupReminder busy={busy} onExport={() => void backup.export()} />
+      )}
+
       {topics.length > 0 && (
         <div class="search">
           <input
+            id="search"
             type="search"
             class="save__input search__input"
+            aria-keyshortcuts="/"
             aria-label="Search all topics"
-            placeholder="Search tabs in all topics"
+            placeholder="Search tabs in all topics  ( / )"
             value={query}
             onInput={(e) => setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -269,6 +386,22 @@ export function App({ initial, api, now = Date.now }: Props) {
           onPreview={parking.preview}
           onRestore={parking.restore}
           onRestoreAll={parking.restoreAll}
+        />
+      )}
+
+      {!query.trim() && (
+        <BackupPanel
+          lastExportAt={load.store.settings.lastExportAt}
+          hasTopics={topics.length > 0}
+          trash={load.store.trash}
+          busy={busy}
+          now={minute}
+          onExport={() => void backup.export()}
+          onImport={(text) => void backup.import(text)}
+          onImportError={backup.importError}
+          onUndoDelete={backup.undoDelete}
+          onListSnapshots={backup.listSnapshots}
+          onRestoreSnapshot={backup.restoreSnapshot}
         />
       )}
 

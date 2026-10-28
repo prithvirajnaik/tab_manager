@@ -8,6 +8,7 @@ import {
   type Links,
 } from './links';
 import { selectIdleTabs } from './autopark';
+import { parseImport, serializeExport } from './exportImport';
 import {
   TRASH_DAYS,
   isOpenableUrl,
@@ -21,7 +22,7 @@ import type { BrowserPort, Clock, LiveGroup, LiveTab } from './ports';
 import { createWriteQueue } from './queue';
 import { reconcileTopic, revertCloses } from './reconcile';
 import { reconcileSections } from './sections';
-import type { Repo } from './repo';
+import { StoreUnreadableError, type Repo } from './repo';
 import { matchWindows, pruneExpired } from './startup';
 import { isBlankPage, isSaveable, openOrder, toSavedTab } from './tabs';
 
@@ -904,7 +905,6 @@ export function createService(deps: ServiceDeps) {
       });
     },
 
-    /** Brings back every parked tab of a topic, or of the unsorted list when topicId is null. */
     /**
      * Brings back every parked tab of a topic, or of the unsorted list when topicId is null.
      * Tabs the browser refuses to open stay parked and are counted as failed.
@@ -949,6 +949,128 @@ export function createService(deps: ServiceDeps) {
           return s;
         });
         return { restored: ids.size, failed: entries.length - ids.size };
+      });
+    },
+
+    /** The whole store as an export file; records the time for the backup reminder. */
+    exportData(): Promise<{ text: string }> {
+      return run(async () => {
+        const at = now();
+        const store = await repo.update((s) => {
+          s.settings.lastExportAt = at;
+          return s;
+        });
+        return { text: serializeExport(store, at) };
+      });
+    },
+
+    /**
+     * Adds the topics (and unsorted parked tabs) of an export file to the current ones, after
+     * a snapshot. Nothing is overwritten: clashing topic or tab ids get new ids.
+     */
+    importData(text: string): Promise<{ topics: number; tabs: number }> {
+      return run(async () => {
+        const parsed = parseImport(text);
+        if (!parsed.ok) throw new UserError(parsed.error);
+        const incoming = parsed.store;
+        let tabs = 0;
+        await repo.update(
+          (s) => {
+            const topicIds = new Set(s.topics.map((t) => t.id));
+            const tabIds = new Set(
+              s.topics.flatMap((t) =>
+                [...t.tabs, ...t.recentlyClosed, ...t.parked].map((x) => x.id),
+              ),
+            );
+            for (const p of s.unsortedParked) tabIds.add(p.id);
+            // Deleted topics can come back from the trash, so their ids are taken too.
+            for (const e of s.trash) {
+              topicIds.add(e.topic.id);
+              for (const x of [...e.topic.tabs, ...e.topic.recentlyClosed, ...e.topic.parked]) {
+                tabIds.add(x.id);
+              }
+            }
+            const fresh = <T extends { id: string }>(x: T): T => {
+              if (!tabIds.has(x.id)) {
+                tabIds.add(x.id);
+                return x;
+              }
+              const id = newId();
+              tabIds.add(id);
+              return { ...x, id };
+            };
+            for (const t of incoming.topics) {
+              const id = topicIds.has(t.id) ? newId() : t.id;
+              topicIds.add(id);
+              tabs += t.tabs.length;
+              s.topics.push({
+                ...t,
+                id,
+                windowId: null,
+                tabs: t.tabs.map(fresh),
+                recentlyClosed: t.recentlyClosed.map(fresh),
+                parked: t.parked.map(fresh),
+              });
+            }
+            s.unsortedParked = [...s.unsortedParked, ...incoming.unsortedParked.map(fresh)];
+            return s;
+          },
+          { snapshot: true },
+        );
+        return { topics: incoming.topics.length, tabs };
+      });
+    },
+
+    /** Snapshots, newest first, summarised for the recovery screen. */
+    listSnapshots(): Promise<{ at: number; topics: number; tabs: number }[]> {
+      return run(async () =>
+        (await repo.snapshots()).map((s) => ({
+          at: s.at,
+          topics: s.topics.length,
+          tabs: s.topics.reduce((n, t) => n + t.tabs.length, 0),
+        })),
+      );
+    },
+
+    /**
+     * Puts the topics back as they were in a snapshot (itself snapshotting the current ones).
+     * Every window is unlinked first, so the restored topics show as saved and no open window
+     * overwrites them on the next sync; the windows stay open.
+     */
+    restoreSnapshot(at: number): Promise<void> {
+      return run(async () => {
+        if (!(await repo.snapshots()).some((s) => s.at === at)) {
+          throw new UserError('That snapshot no longer exists.');
+        }
+        // Unlink first: if the worker stops between the two writes, no sync can overwrite
+        // the restored topics with a window's tabs.
+        const links = await linkStore.read();
+        await linkStore.write({
+          ...links,
+          windows: {},
+          tabs: {},
+          groups: {},
+          merging: [],
+          recentCloses: [],
+        });
+        await repo.restoreSnapshot(at);
+      });
+    },
+
+    /**
+     * Only for data that cannot be read: copies it to a backup key, then starts empty. Runs
+     * outside the usual relink step, which would need a readable store.
+     */
+    resetStore(): Promise<{ backupKey: string }> {
+      return queue.run(async () => {
+        // Refuse if the data has become readable again (a stale page, say): nothing to rescue.
+        try {
+          await repo.read();
+        } catch (e) {
+          if (!(e instanceof StoreUnreadableError)) throw e;
+          return { backupKey: await repo.resetKeepingBackup() };
+        }
+        throw new UserError('Your data can be read again. Reload this page.');
       });
     },
 
@@ -1033,8 +1155,22 @@ export function createService(deps: ServiceDeps) {
             ? previous
             : null;
         await repo.update((s) => {
+          // Tabs imported or restored meanwhile may have taken some of these ids.
+          const taken = new Set(
+            s.topics.flatMap((t) => [...t.tabs, ...t.recentlyClosed, ...t.parked].map((x) => x.id)),
+          );
+          for (const p of s.unsortedParked) taken.add(p.id);
+          const fresh = <T extends { id: string }>(x: T): T =>
+            taken.has(x.id) ? { ...x, id: newId() } : x;
           s.trash = s.trash.filter((e) => e.topic.id !== topicId);
-          s.topics.push({ ...entry.topic, id: restoredId, windowId: relink });
+          s.topics.push({
+            ...entry.topic,
+            id: restoredId,
+            windowId: relink,
+            tabs: entry.topic.tabs.map(fresh),
+            recentlyClosed: entry.topic.recentlyClosed.map(fresh),
+            parked: entry.topic.parked.map(fresh),
+          });
           return s;
         });
         await linkStore.write({

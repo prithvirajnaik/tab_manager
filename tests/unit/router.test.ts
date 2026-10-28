@@ -64,10 +64,12 @@ describe('handleMessage', () => {
       { type: 'renameTopic', topicId, name: 'B' },
       { type: 'detachWindow', topicId },
       { type: 'updateSettings', autoParkDays: 10, autoParkMode: 'dry-run' },
+      { type: 'exportData' },
+      { type: 'listSnapshots' },
       { type: 'deleteTopic', topicId },
       { type: 'undoDelete', topicId },
     ]) {
-      expect(await handleMessage(service, msg, own)).toEqual({ ok: true });
+      expect(await handleMessage(service, msg, own)).toMatchObject({ ok: true });
     }
   });
 

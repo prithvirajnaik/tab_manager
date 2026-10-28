@@ -21,6 +21,8 @@ function fakeApi(overrides: Partial<Api> = {}) {
     },
     favicon: (u) => `fav:${u}`,
     currentTopicId: async () => null,
+    download: () => undefined,
+    rawStore: async () => '{}',
     ...overrides,
   };
   return { api, sent, push: (l: LoadResult) => push(l) };
@@ -179,11 +181,15 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Arrived' })).toBeTruthy();
   });
 
-  it('shows a read error without offering to change anything', () => {
-    const { api } = fakeApi();
+  it('shows a read error and offers only recovery actions', () => {
+    const { api, sent } = fakeApi();
     render(<App initial={{ ok: false, error: 'bad data' }} api={api} />);
     expect(screen.getByRole('alert').textContent).toContain('could not be read');
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Download the stored data',
+      'Start fresh…',
+    ]);
+    expect(sent).toEqual([]);
   });
 
   it('lists recently closed tabs with restore', async () => {

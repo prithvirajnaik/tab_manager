@@ -17,6 +17,8 @@ function setup(s = store()) {
     subscribe: () => () => undefined,
     favicon: (u) => `fav:${u}`,
     currentTopicId: async () => null,
+    download: () => undefined,
+    rawStore: async () => '{}',
   };
   const initial: LoadResult = { ok: true, store: s };
   render(<App initial={initial} api={api} />);
