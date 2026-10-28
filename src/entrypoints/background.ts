@@ -74,6 +74,11 @@ export default defineBackground({
       }
       sync();
     });
+    // Group title, colour and collapse changes do not fire tabs.onUpdated.
+    chrome.tabGroups.onCreated.addListener(sync);
+    chrome.tabGroups.onUpdated.addListener(sync);
+    chrome.tabGroups.onRemoved.addListener(sync);
+    chrome.tabGroups.onMoved.addListener(sync);
     chrome.windows.onCreated.addListener(sync);
     chrome.windows.onRemoved.addListener(sync);
 

@@ -1,6 +1,10 @@
+import { useDeferredValue } from 'preact/compat';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Command, CommandResponse } from '../core/messages';
+import { buildIndex, searchTabs } from '../core/search';
 import type { Api, LoadResult } from './api';
+import { SearchResults } from './SearchResults';
+import type { TopicRef } from './TabsPanel';
 import { TopicCard, type TopicActions } from './TopicCard';
 
 type Props = { initial: LoadResult; api: Api; now?: () => number };
@@ -34,6 +38,7 @@ export function App({ initial, api, now = Date.now }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [name, setName] = useState('');
+  const [query, setQuery] = useState('');
   // Minute-granular, so "updated 3 minutes ago" does not re-render every card constantly.
   const [minute, setMinute] = useState(() => Math.floor(now() / MINUTE) * MINUTE);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -93,6 +98,11 @@ export function App({ initial, api, now = Date.now }: Props) {
         }),
       rename: (topicId, newName) => void run({ type: 'renameTopic', topicId, name: newName }),
       restore: (topicId, tabId, from) => void run({ type: 'restoreTab', topicId, tabId, from }),
+      group: (topicId, tabIds, sectionName) =>
+        void run({ type: 'groupTabs', topicId, tabIds, name: sectionName }),
+      ungroup: (topicId, sectionId) => void run({ type: 'ungroupSection', topicId, sectionId }),
+      move: (fromTopicId, tabId, toTopicId) =>
+        void run({ type: 'moveTab', fromTopicId, tabId, toTopicId }),
       remove: (topicId) => {
         const topic = topicsRef.current.find((t) => t.id === topicId);
         void run({ type: 'deleteTopic', topicId }).then((res) => {
@@ -107,6 +117,21 @@ export function App({ initial, api, now = Date.now }: Props) {
     };
     return { run, actions, showToast, startToastTimer, pauseToastTimer };
   }, []);
+
+  const topicsForRefs = load.ok ? load.store.topics : [];
+  const refsKey = JSON.stringify(topicsForRefs.map((t) => [t.id, t.name]));
+  const topicRefs = useMemo<TopicRef[]>(
+    () => topicsForRefs.map((t) => ({ id: t.id, name: t.name })),
+    // Recomputed only when ids or names change, so cards are not re-rendered for nothing.
+    [refsKey],
+  );
+  // The index is rebuilt only when the store changes; typing just filters it.
+  const index = useMemo(() => (load.ok ? buildIndex(load.store) : []), [load]);
+  const deferredQuery = useDeferredValue(query);
+  const results = useMemo(
+    () => (deferredQuery.trim() ? searchTabs(index, deferredQuery) : []),
+    [index, deferredQuery],
+  );
 
   if (!load.ok) {
     return (
@@ -168,7 +193,34 @@ export function App({ initial, api, now = Date.now }: Props) {
         </div>
       )}
 
-      {topics.length === 0 ? (
+      {topics.length > 0 && (
+        <div class="search">
+          <input
+            type="search"
+            class="save__input search__input"
+            aria-label="Search all topics"
+            placeholder="Search tabs in all topics"
+            value={query}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('');
+            }}
+          />
+        </div>
+      )}
+
+      {query.trim() ? (
+        <SearchResults
+          query={query.trim()}
+          results={results}
+          topics={topicRefs}
+          busy={busy}
+          favicon={api.favicon}
+          onOpenTopic={actions.open}
+          onMove={actions.move}
+          onRestore={actions.restore}
+        />
+      ) : topics.length === 0 ? (
         <section class="empty">
           <h2>No topics yet</h2>
           <p>
@@ -187,6 +239,7 @@ export function App({ initial, api, now = Date.now }: Props) {
               now={minute}
               favicon={api.favicon}
               actions={actions}
+              topicRefs={topicRefs}
             />
           ))}
         </section>

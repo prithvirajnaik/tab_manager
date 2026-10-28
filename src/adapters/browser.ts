@@ -115,8 +115,12 @@ export const chromeBrowser: BrowserPort = {
     await chrome.tabGroups.update(groupId, {
       title: spec.title,
       ...(spec.color ? { color: spec.color } : {}),
-      ...(spec.collapsed === undefined ? {} : { collapsed: spec.collapsed }),
     });
+    // Collapsing can be refused (for example while the group holds the active tab); the
+    // title and colour above must not be lost over it.
+    if (spec.collapsed !== undefined) {
+      await chrome.tabGroups.update(groupId, { collapsed: spec.collapsed }).catch(() => undefined);
+    }
     return groupId;
   },
 

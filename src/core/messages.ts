@@ -21,6 +21,19 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('deleteTopic'), topicId: z.string() }),
   z.object({ type: z.literal('undoDelete'), topicId: z.string() }),
   z.object({ type: z.literal('detachWindow'), topicId: z.string() }),
+  z.object({
+    type: z.literal('groupTabs'),
+    topicId: z.string(),
+    tabIds: z.array(z.string()).max(1000),
+    name: z.string(),
+  }),
+  z.object({ type: z.literal('ungroupSection'), topicId: z.string(), sectionId: z.string() }),
+  z.object({
+    type: z.literal('moveTab'),
+    fromTopicId: z.string(),
+    tabId: z.string(),
+    toTopicId: z.string(),
+  }),
 ]);
 
 export type Command = z.infer<typeof CommandSchema>;
