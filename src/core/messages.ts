@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AUTO_PARK_MODES } from './model';
 
 /** Commands extension pages send to the service worker. Validated on arrival. */
 export const CommandSchema = z.discriminatedUnion('type', [
@@ -33,6 +34,19 @@ export const CommandSchema = z.discriminatedUnion('type', [
     fromTopicId: z.string(),
     tabId: z.string(),
     toTopicId: z.string(),
+  }),
+  z.object({
+    type: z.literal('autoPark'),
+    dryRun: z.boolean().optional(),
+    /** Clock override, for end-to-end tests. */
+    at: z.number().optional(),
+  }),
+  z.object({ type: z.literal('restoreUnsorted'), tabId: z.string() }),
+  z.object({ type: z.literal('restoreAllParked'), topicId: z.string().nullable() }),
+  z.object({
+    type: z.literal('updateSettings'),
+    autoParkDays: z.number().optional(),
+    autoParkMode: z.enum(AUTO_PARK_MODES).optional(),
   }),
 ]);
 

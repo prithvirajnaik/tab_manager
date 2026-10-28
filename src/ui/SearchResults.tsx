@@ -12,9 +12,15 @@ type Props = {
   onOpenTopic: (topicId: string) => void;
   onMove: (fromTopicId: string, tabId: string, toTopicId: string) => void;
   onRestore: (topicId: string, tabId: string, from: 'parked' | 'recentlyClosed') => void;
+  onRestoreUnsorted: (tabId: string) => void;
 };
 
-const LIST_LABEL = { tabs: '', parked: 'Parked', recentlyClosed: 'Recently closed' } as const;
+const LIST_LABEL = {
+  tabs: '',
+  parked: 'Parked',
+  unsortedParked: 'Parked',
+  recentlyClosed: 'Recently closed',
+} as const;
 
 export function SearchResults({
   query,
@@ -25,6 +31,7 @@ export function SearchResults({
   onOpenTopic,
   onMove,
   onRestore,
+  onRestoreUnsorted,
 }: Props) {
   if (results.length === 0) {
     return (
@@ -76,7 +83,9 @@ export function SearchResults({
                   disabled={busy}
                   aria-label={`Restore ${title}`}
                   onClick={() =>
-                    onRestore(r.topicId, r.tab.id, r.list as 'parked' | 'recentlyClosed')
+                    r.list === 'unsortedParked'
+                      ? onRestoreUnsorted(r.tab.id)
+                      : onRestore(r.topicId, r.tab.id, r.list as 'parked' | 'recentlyClosed')
                   }
                 >
                   Restore

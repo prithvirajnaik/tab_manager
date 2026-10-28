@@ -320,6 +320,7 @@ describe('live link', () => {
     browser.closeTab(tabIds[1]!);
     await service.syncAll();
     expect((await repo.read()).topics[0]!.recentlyClosed).toHaveLength(1);
+    await service.updateSettings({ autoParkMode: 'off' });
     advance(31 * 86_400_000);
     browser.addTab(windowId, { url: 'https://c/' });
     await service.maintenance();
@@ -434,10 +435,16 @@ describe('event sequences never lose a saved tab', () => {
         } else if (r < 0.96) {
           const t = pick((await ctx.repo.read()).topics);
           if (t) await ctx.service.detachWindow(t.id);
+        } else if (r < 0.98) {
+          // Auto-park far in the future: idle tabs move to Parked, never away.
+          await ctx.service.autoPark({ at: ctx.now() + 60 * 86_400_000 });
+        } else {
+          const t = pick((await ctx.repo.read()).topics);
+          if (t) await ctx.service.restoreAllParked(t.id);
         }
         if (random() < 0.7) await ctx.service.syncAll();
         await record();
       }
     }
-  });
+  }, 60_000);
 });

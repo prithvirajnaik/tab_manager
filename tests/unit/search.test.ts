@@ -85,6 +85,21 @@ describe('searchTabs', () => {
     expect(searchTabs(jp, 'ガイド').map((r) => r.tab.id)).toEqual(['g']);
   });
 
+  it('finds tabs parked from windows without a topic', () => {
+    const withLoose = store({
+      ...s,
+      unsortedParked: [{ ...savedTab({ id: 'u', title: 'Loose recipe' }), parkedAt: 1 }],
+    });
+    expect(searchTabs(withLoose, 'recipe')).toEqual([
+      expect.objectContaining({ topicId: '', list: 'unsortedParked' }),
+    ]);
+  });
+
+  it('folds a capital dotted I', () => {
+    const t = store({ topics: [topic({ tabs: [savedTab({ id: 'i', title: 'İstanbul' })] })] });
+    expect(searchTabs(t, 'istanbul').map((r) => r.tab.id)).toEqual(['i']);
+  });
+
   it('searches a prebuilt index the same as the store', () => {
     expect(searchTabs(buildIndex(s), 'japan')).toEqual(searchTabs(s, 'japan'));
   });

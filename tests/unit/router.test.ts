@@ -63,6 +63,7 @@ describe('handleMessage', () => {
     for (const msg of [
       { type: 'renameTopic', topicId, name: 'B' },
       { type: 'detachWindow', topicId },
+      { type: 'updateSettings', autoParkDays: 10, autoParkMode: 'dry-run' },
       { type: 'deleteTopic', topicId },
       { type: 'undoDelete', topicId },
     ]) {

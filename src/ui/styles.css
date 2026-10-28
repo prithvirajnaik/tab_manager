@@ -431,6 +431,56 @@ body {
   flex: 1;
 }
 
+.panel {
+  margin-top: 32px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.panel__title {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.panel__subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.panel__hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.panel__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel select,
+.panel__days {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.panel__days {
+  width: 5em;
+}
+
+.panel__preview,
+.panel__parked {
+  margin-top: 14px;
+}
+
 @media (max-width: 520px) {
   .page {
     padding: 20px 16px 96px;

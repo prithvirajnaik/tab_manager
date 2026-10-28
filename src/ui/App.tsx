@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Command, CommandResponse } from '../core/messages';
 import { buildIndex, searchTabs } from '../core/search';
 import type { Api, LoadResult } from './api';
+import type { AutoParkResult } from '../core/commands';
+import { ParkingPanel } from './ParkingPanel';
 import { SearchResults } from './SearchResults';
 import type { TopicRef } from './TabsPanel';
 import { TopicCard, type TopicActions } from './TopicCard';
@@ -101,6 +103,7 @@ export function App({ initial, api, now = Date.now }: Props) {
       group: (topicId, tabIds, sectionName) =>
         void run({ type: 'groupTabs', topicId, tabIds, name: sectionName }),
       ungroup: (topicId, sectionId) => void run({ type: 'ungroupSection', topicId, sectionId }),
+      restoreAllParked: (topicId) => void run({ type: 'restoreAllParked', topicId }),
       move: (fromTopicId, tabId, toTopicId) =>
         void run({ type: 'moveTab', fromTopicId, tabId, toTopicId }),
       remove: (topicId) => {
@@ -115,7 +118,17 @@ export function App({ initial, api, now = Date.now }: Props) {
         });
       },
     };
-    return { run, actions, showToast, startToastTimer, pauseToastTimer };
+    const parking = {
+      settings: (patch: { autoParkDays?: number; autoParkMode?: 'on' | 'dry-run' | 'off' }) =>
+        void run({ type: 'updateSettings', ...patch }),
+      preview: async () => {
+        const res = await run({ type: 'autoPark', dryRun: true });
+        return res.ok ? (res.data as AutoParkResult).tabs : null;
+      },
+      restore: (tabId: string) => void run({ type: 'restoreUnsorted', tabId }),
+      restoreAll: () => void run({ type: 'restoreAllParked', topicId: null }),
+    };
+    return { run, actions, parking, showToast, startToastTimer, pauseToastTimer };
   }, []);
 
   const topicsForRefs = load.ok ? load.store.topics : [];
@@ -148,7 +161,7 @@ export function App({ initial, api, now = Date.now }: Props) {
   const { topics } = load.store;
   const busy = pending > 0;
   const currentTopic = topics.find((t) => t.id === currentTopicId);
-  const { run, actions, showToast, startToastTimer, pauseToastTimer } = helpers;
+  const { run, actions, parking, showToast, startToastTimer, pauseToastTimer } = helpers;
 
   const save = async (e: Event) => {
     e.preventDefault();
@@ -219,6 +232,7 @@ export function App({ initial, api, now = Date.now }: Props) {
           onOpenTopic={actions.open}
           onMove={actions.move}
           onRestore={actions.restore}
+          onRestoreUnsorted={parking.restore}
         />
       ) : topics.length === 0 ? (
         <section class="empty">
@@ -243,6 +257,19 @@ export function App({ initial, api, now = Date.now }: Props) {
             />
           ))}
         </section>
+      )}
+
+      {!query.trim() && (
+        <ParkingPanel
+          settings={load.store.settings}
+          unsorted={load.store.unsortedParked}
+          busy={busy}
+          now={minute}
+          onSettings={parking.settings}
+          onPreview={parking.preview}
+          onRestore={parking.restore}
+          onRestoreAll={parking.restoreAll}
+        />
       )}
 
       <div class="toast-region" role="status" aria-live="polite">

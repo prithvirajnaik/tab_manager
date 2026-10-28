@@ -50,6 +50,25 @@ export async function handleMessage(
       case 'ungroupSection':
         await service.ungroupSection(cmd.topicId, cmd.sectionId);
         return { ok: true };
+      case 'autoPark':
+        return {
+          ok: true,
+          data: await service.autoPark({
+            ...(cmd.dryRun === undefined ? {} : { dryRun: cmd.dryRun }),
+            ...(cmd.at === undefined ? {} : { at: cmd.at }),
+          }),
+        };
+      case 'restoreUnsorted':
+        await service.restoreUnsorted(cmd.tabId, sender.windowId);
+        return { ok: true };
+      case 'restoreAllParked':
+        return { ok: true, data: await service.restoreAllParked(cmd.topicId, sender.windowId) };
+      case 'updateSettings':
+        await service.updateSettings({
+          ...(cmd.autoParkDays === undefined ? {} : { autoParkDays: cmd.autoParkDays }),
+          ...(cmd.autoParkMode === undefined ? {} : { autoParkMode: cmd.autoParkMode }),
+        });
+        return { ok: true };
       case 'moveTab':
         await service.moveTab(cmd.fromTopicId, cmd.tabId, cmd.toTopicId);
         return { ok: true };
