@@ -14,7 +14,15 @@ describe('links', () => {
     expect(parseLinks('x')).toEqual(emptyLinks());
     expect(
       parseLinks({ windows: { 1: 't', 2: 3 }, tabs: [], closing: [4, 'x'], reconciledAt: 9 }),
-    ).toEqual({ windows: { 1: 't' }, tabs: {}, groups: {}, closing: [4], reconciledAt: 9 });
+    ).toEqual({
+      windows: { 1: 't' },
+      tabs: {},
+      groups: {},
+      closing: [4],
+      reconciledAt: 9,
+      deletedFrom: {},
+    });
+    expect(parseLinks({ deletedFrom: { a: 3, b: 'x' } }).deletedFrom).toEqual({ a: 3 });
   });
 
   it('finds the window bound to a topic', () => {

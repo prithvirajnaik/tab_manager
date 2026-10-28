@@ -12,7 +12,8 @@ export default defineConfig({
     description: 'Live-linked tab topics on your new tab page. Local-first.',
     // Tab.lastAccessed is Chrome 121+; 30s alarms are Chrome 120+.
     minimum_chrome_version: '121',
-    permissions: ['tabs', 'storage', 'unlimitedStorage', 'alarms', 'tabGroups'],
+    // favicon: read icons from the browser's cache instead of fetching them from sites.
+    permissions: ['tabs', 'storage', 'unlimitedStorage', 'alarms', 'tabGroups', 'favicon'],
   },
   vite: () => ({
     plugins: [preact()],
