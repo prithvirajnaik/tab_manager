@@ -37,6 +37,12 @@ export function parseImport(text: string): ImportResult {
   }
   try {
     const store = migrate(data);
+    const ids = store.topics.flatMap((t) =>
+      [...t.tabs, ...t.recentlyClosed, ...t.parked].map((s) => s.id),
+    );
+    if (new Set(ids).size !== ids.length) {
+      return { ok: false, error: 'Invalid export: the same tab appears more than once.' };
+    }
     for (const t of store.topics) t.windowId = null;
     for (const e of store.trash) e.topic.windowId = null;
     return { ok: true, store };

@@ -28,7 +28,7 @@ export function keepUnchanged(prev: LoadResult, next: LoadResult): LoadResult {
 
 export function App({ initial, api, now = Date.now }: Props) {
   const [load, setLoad] = useState<LoadResult>(initial);
-  const [windowId, setWindowId] = useState<number | null>(null);
+  const [currentTopicId, setCurrentTopicId] = useState<string | null>(null);
   // A counter, so overlapping commands do not clear each other's busy state.
   const [pending, setPending] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -40,9 +40,10 @@ export function App({ initial, api, now = Date.now }: Props) {
   const topicsRef = useRef(load.ok ? load.store.topics : []);
   topicsRef.current = load.ok ? load.store.topics : [];
 
-  useEffect(() => api.subscribe((next) => setLoad((prev) => keepUnchanged(prev, next))), [api]);
   useEffect(() => {
-    void api.currentWindowId().then(setWindowId);
+    const refreshCurrent = () => void api.currentTopicId().then(setCurrentTopicId);
+    refreshCurrent();
+    return api.subscribe((next) => setLoad((prev) => keepUnchanged(prev, next)), refreshCurrent);
   }, [api]);
   useEffect(() => {
     const id = setInterval(() => setMinute(Math.floor(now() / MINUTE) * MINUTE), MINUTE);
@@ -83,6 +84,7 @@ export function App({ initial, api, now = Date.now }: Props) {
           if (failed)
             showToast({ message: `${count(failed)} could not be opened and moved to Parked.` });
         }),
+      detach: (topicId) => void run({ type: 'detachWindow', topicId }),
       park: (topicId) =>
         void run({ type: 'parkTopic', topicId }).then((res) => {
           const left = res.ok ? (res.data as { leftOpen?: number } | undefined)?.leftOpen : 0;
@@ -120,7 +122,7 @@ export function App({ initial, api, now = Date.now }: Props) {
 
   const { topics } = load.store;
   const busy = pending > 0;
-  const currentTopic = topics.find((t) => windowId !== null && t.windowId === windowId);
+  const currentTopic = topics.find((t) => t.id === currentTopicId);
   const { run, actions, showToast, startToastTimer, pauseToastTimer } = helpers;
 
   const save = async (e: Event) => {

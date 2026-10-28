@@ -89,11 +89,32 @@ export class FakeBrowser implements BrowserPort {
     const tab = this.tabs.get(tabId)!;
     const from = this.windows.get(tab.windowId)!;
     from.splice(from.indexOf(tabId), 1);
-    if (from.length === 0) this.windows.delete(tab.windowId);
+    if (from.length === 0 && tab.windowId !== windowId) this.windows.delete(tab.windowId);
     tab.windowId = windowId;
     const to = this.windows.get(windowId)!;
     to.splice(Math.min(index < 0 ? to.length : index, to.length), 0, tabId);
     this.normalize(windowId);
+  }
+
+  /**
+   * Simulates quitting and restoring the session: same windows, tabs and order, but every
+   * window and tab gets a new id, as ids are only unique within a browser session.
+   */
+  restart() {
+    const windows = [...this.windows.entries()].map(([, ids]) =>
+      ids.map((id) => this.tabs.get(id)!),
+    );
+    this.windows.clear();
+    this.tabs.clear();
+    this.groups.clear();
+    for (const tabs of windows) {
+      const windowId = this.id();
+      this.windows.set(windowId, []);
+      for (const t of tabs) {
+        const props = Object.fromEntries(Object.entries(t).filter(([k]) => k !== 'id'));
+        this.addTab(windowId, { ...props, windowId, groupId: -1 });
+      }
+    }
   }
 
   private normalize(windowId: number) {

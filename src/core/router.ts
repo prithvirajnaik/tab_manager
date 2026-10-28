@@ -41,6 +41,9 @@ export async function handleMessage(
       case 'undoDelete':
         await service.undoDelete(cmd.topicId);
         return { ok: true };
+      case 'detachWindow':
+        await service.detachWindow(cmd.topicId);
+        return { ok: true };
     }
   } catch (e) {
     if (e instanceof UserError || e instanceof StoreUnreadableError) {

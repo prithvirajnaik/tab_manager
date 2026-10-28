@@ -76,6 +76,19 @@ describe('export and import', () => {
       JSON.stringify({ format: EXPORT_FORMAT, store: { schemaVersion: 0, topics: 'garbage' } }),
     ],
     [
+      'duplicate saved tab ids',
+      JSON.stringify({
+        format: EXPORT_FORMAT,
+        store: {
+          ...store(),
+          topics: [
+            topic({ tabs: [savedTab({ id: 'same' })] }),
+            topic({ tabs: [savedTab({ id: 'same' })] }),
+          ],
+        },
+      }),
+    ],
+    [
       'duplicate topic ids',
       JSON.stringify({
         format: EXPORT_FORMAT,

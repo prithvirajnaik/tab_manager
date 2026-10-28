@@ -20,6 +20,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('renameTopic'), topicId: z.string(), name: z.string() }),
   z.object({ type: z.literal('deleteTopic'), topicId: z.string() }),
   z.object({ type: z.literal('undoDelete'), topicId: z.string() }),
+  z.object({ type: z.literal('detachWindow'), topicId: z.string() }),
 ]);
 
 export type Command = z.infer<typeof CommandSchema>;
