@@ -6,6 +6,8 @@ import type { Command, CommandResponse } from '../../src/core/messages';
 import { savedTab, store, topic } from '../unit/factories';
 
 afterEach(cleanup);
+// Export, import and recovery live in Settings.
+beforeEach(() => history.replaceState(null, '', '#/settings'));
 
 function setup(initial: LoadResult, reply: (c: Command) => CommandResponse = () => ({ ok: true })) {
   const sent: Command[] = [];
@@ -36,12 +38,31 @@ const withTopics = (lastExportAt: number | null) =>
   }) as const;
 
 describe('backup and recovery', () => {
-  it('reminds to export when there has been no recent export', () => {
+  it('shows the backup state in the sidebar from the last export time', () => {
+    const backup = () => screen.getByRole('region', { name: 'Backup' }).textContent;
     setup(withTopics(null));
-    expect(screen.getByRole('note').textContent).toContain('Export a backup');
+    expect(backup()).toContain('Not backed up yet');
+    cleanup();
+    setup(withTopics(80 * 86_400_000));
+    expect(backup()).toContain('Backup is out of date');
+    expect(backup()).toContain('Last export 3 weeks ago');
     cleanup();
     setup(withTopics(99 * 86_400_000));
-    expect(screen.queryByRole('note')).toBeNull();
+    expect(backup()).toContain('Backed up');
+    expect(backup()).toContain('Last export yesterday');
+  });
+
+  it('shows no backup card when there is nothing to back up', () => {
+    setup({ ok: true, store: store() });
+    expect(screen.queryByRole('region', { name: 'Backup' })).toBeNull();
+  });
+
+  it('exports from the sidebar card', async () => {
+    const { sent } = setup(withTopics(null), (c) =>
+      c.type === 'exportData' ? { ok: true, data: { text: '{}' } } : { ok: true },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Export backup' }));
+    await waitFor(() => expect(sent).toEqual([{ type: 'exportData' }]));
   });
 
   it('exports to a downloaded file', async () => {
@@ -103,9 +124,12 @@ describe('backup and recovery', () => {
     await waitFor(() => expect(sent).toEqual([{ type: 'resetStore' }]));
   });
 
-  it('focuses search with the slash key', () => {
+  it('focuses search with the slash key and with Ctrl+K', () => {
     setup(withTopics(1));
     fireEvent.keyDown(document.body, { key: '/' });
+    expect(document.activeElement?.id).toBe('search');
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true });
     expect(document.activeElement?.id).toBe('search');
   });
 });

@@ -1,141 +1,114 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import type { ParkCandidate } from '../core/commands';
-import type { AutoParkMode, ParkedTab, Settings } from '../core/model';
-import { hostOf, timeAgo } from './format';
+import type { AutoParkMode, Settings } from '../core/model';
+import { hostOf, plural } from './format';
+import { EyeIcon, ParkIcon } from './icons';
 
 type Props = {
   settings: Settings;
-  unsorted: ParkedTab[];
   busy: boolean;
-  now: number;
   onSettings: (patch: { autoParkDays?: number; autoParkMode?: AutoParkMode }) => void;
   onPreview: () => Promise<ParkCandidate[] | null>;
-  onRestore: (tabId: string) => void;
-  onRestoreAll: () => void;
 };
 
 const MODES: { value: AutoParkMode; label: string }[] = [
-  { value: 'on', label: 'On' },
-  { value: 'dry-run', label: 'Preview only (parks nothing)' },
   { value: 'off', label: 'Off' },
+  { value: 'dry-run', label: 'Preview only' },
+  { value: 'on', label: 'On' },
 ];
 
-/** Auto-park settings, a dry-run preview, and tabs parked from windows with no topic. */
-export function ParkingPanel(props: Props) {
-  const { settings, unsorted, busy, now, onSettings, onPreview, onRestore, onRestoreAll } = props;
-  const [days, setDays] = useState(String(settings.autoParkDays));
-  useEffect(() => setDays(String(settings.autoParkDays)), [settings.autoParkDays]);
+const DAY_PRESETS = [3, 7, 14, 30, 60, 90];
+
+/** Auto-park mode and idle days, and a dry run of what would be parked right now. */
+export function ParkingPanel({ settings, busy, onSettings, onPreview }: Props) {
   const [preview, setPreview] = useState<ParkCandidate[] | null>(null);
+  // A stored value that is not a preset (any 1 to 365 is valid) is still offered as-is.
+  const days = [...new Set([...DAY_PRESETS, settings.autoParkDays])].sort((a, b) => a - b);
 
   return (
     <section class="panel" aria-labelledby="parking-title">
-      <h2 id="parking-title" class="panel__title">
-        Parking
-      </h2>
-      <p class="panel__hint">
-        Tabs you have not looked at for a while are parked: saved and closed, never deleted. Pinned,
-        playing and active tabs are never parked.
-      </p>
+      <header class="panel__head">
+        <span class="panel__icon">
+          <ParkIcon />
+        </span>
+        <div>
+          <h2 id="parking-title" class="panel__title">
+            Parking
+          </h2>
+          <p class="hint">
+            Tabs you have not looked at for a while are parked: saved and closed, never deleted.
+            Pinned, playing and active tabs are never parked.
+          </p>
+        </div>
+      </header>
+
       <div class="panel__row">
-        <label for="park-mode">Auto-park</label>
-        <select
-          id="park-mode"
-          value={settings.autoParkMode}
-          disabled={busy}
-          onChange={(e) => onSettings({ autoParkMode: e.currentTarget.value as AutoParkMode })}
-        >
+        <fieldset class="segmented" disabled={busy}>
+          <legend class="segmented__legend">Auto-park</legend>
           {MODES.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
+            <label key={m.value} class="segmented__option">
+              <input
+                type="radio"
+                name="park-mode"
+                value={m.value}
+                checked={settings.autoParkMode === m.value}
+                onChange={() => onSettings({ autoParkMode: m.value })}
+              />
+              <span>{m.label}</span>
+            </label>
           ))}
-        </select>
-        <label for="park-days">after</label>
-        <input
-          id="park-days"
-          type="number"
-          aria-label="Days idle before parking"
-          min={1}
-          max={365}
-          value={days}
-          disabled={busy}
-          class="panel__days"
-          onInput={(e) => setDays(e.currentTarget.value)}
-          // change fires on Enter or when focus leaves; read the field, not render state.
-          onChange={(e) => {
-            const n = Number(e.currentTarget.value);
-            if (Number.isInteger(n) && n >= 1 && n <= 365 && n !== settings.autoParkDays) {
-              onSettings({ autoParkDays: n });
-            } else {
-              e.currentTarget.value = String(settings.autoParkDays);
-              setDays(String(settings.autoParkDays));
-            }
-          }}
-        />
-        <span>days idle</span>
+        </fieldset>
+
+        <span class="panel__field">
+          <label for="park-days">Park after</label>
+          <select
+            id="park-days"
+            class="select"
+            value={String(settings.autoParkDays)}
+            disabled={busy || settings.autoParkMode === 'off'}
+            onChange={(e) => onSettings({ autoParkDays: Number(e.currentTarget.value) })}
+          >
+            {days.map((d) => (
+              <option key={d} value={String(d)}>
+                {plural(d, 'day')}
+              </option>
+            ))}
+          </select>
+          <span class="hint">idle</span>
+        </span>
+
         <button
           type="button"
-          class="btn btn--small"
+          class="btn panel__end"
           disabled={busy}
           onClick={() => void onPreview().then(setPreview)}
         >
-          Preview
+          <EyeIcon size={16} />
+          See what would be parked
         </button>
       </div>
 
       {preview && (
-        <div class="panel__preview" role="status">
+        <div class="panel__section" role="status">
           {preview.length === 0 ? (
-            <p>Nothing would be parked right now.</p>
+            <p class="hint">Nothing would be parked right now.</p>
           ) : (
             <>
-              <p>{preview.length === 1 ? '1 tab' : `${preview.length} tabs`} would be parked:</p>
-              <ul class="results">
+              <p class="hint">{plural(preview.length, 'tab')} would be parked:</p>
+              <ul class="rows">
                 {preview.map((t, i) => (
-                  <li key={`${t.url}-${i}`} class="result" title={t.url}>
-                    <div class="result__text">
-                      <span class="tab__title">{t.title || t.url}</span>
-                      <span class="tab__host">
+                  <li key={`${t.url}-${i}`} class="row" title={t.url}>
+                    <span class="row__text">
+                      <span class="row__title">{t.title || t.url}</span>
+                      <span class="row__meta">
                         {hostOf(t.url)} · {t.topicName ?? 'No topic'}
                       </span>
-                    </div>
+                    </span>
                   </li>
                 ))}
               </ul>
             </>
           )}
-        </div>
-      )}
-
-      {unsorted.length > 0 && (
-        <div class="panel__parked">
-          <div class="panel__row">
-            <h3 class="panel__subtitle">Parked from windows without a topic ({unsorted.length})</h3>
-            <button type="button" class="btn btn--small" disabled={busy} onClick={onRestoreAll}>
-              Restore all
-            </button>
-          </div>
-          <ul class="results">
-            {unsorted.map((t) => (
-              <li key={t.id} class="result" title={t.url}>
-                <div class="result__text">
-                  <span class="tab__title">{t.title || t.url}</span>
-                  <span class="tab__host">
-                    {hostOf(t.url)} · parked {timeAgo(t.parkedAt, now)}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  class="btn btn--small"
-                  disabled={busy}
-                  aria-label={`Restore ${t.title || t.url}`}
-                  onClick={() => onRestore(t.id)}
-                >
-                  Restore
-                </button>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
     </section>

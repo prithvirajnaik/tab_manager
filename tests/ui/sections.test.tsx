@@ -6,6 +6,7 @@ import type { Command } from '../../src/core/messages';
 import { savedTab, store, topic } from '../unit/factories';
 
 afterEach(cleanup);
+beforeEach(() => history.replaceState(null, '', '#/'));
 
 function setup(s = store()) {
   const sent: Command[] = [];
@@ -25,10 +26,9 @@ function setup(s = store()) {
   return { sent };
 }
 
-function expand(summary: RegExp | string) {
-  const details = screen.getByText(summary).closest('details')!;
-  details.open = true;
-  fireEvent(details, new Event('toggle'));
+/** Opens a topic's drawer on its tabs. */
+function showTabs(name: string) {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`^Show tabs of ${name}`) }));
 }
 
 const data = () =>
@@ -51,7 +51,7 @@ const data = () =>
 describe('sections in a topic card', () => {
   it('lists tabs under their section and ungroups', async () => {
     const { sent } = setup(data());
-    expand(/Tabs and sections/);
+    showTabs('Japanese');
     const section = screen.getByRole('region', { name: 'Grammar' });
     expect(section.textContent).toContain('Particles');
     fireEvent.click(screen.getByRole('button', { name: 'Ungroup Grammar' }));
@@ -62,7 +62,7 @@ describe('sections in a topic card', () => {
 
   it('groups selected tabs into a new section; pinned tabs cannot be selected', async () => {
     const { sent } = setup(data());
-    expand(/Tabs and sections/);
+    showTabs('Japanese');
     expect((screen.getByLabelText('Select Pinned home') as HTMLInputElement).disabled).toBe(true);
     fireEvent.click(screen.getByLabelText('Select Jisho dictionary'));
     fireEvent.input(screen.getByLabelText('Section name'), { target: { value: 'Lookup' } });
@@ -74,7 +74,7 @@ describe('sections in a topic card', () => {
 
   it('moves a tab to another topic', async () => {
     const { sent } = setup(data());
-    expand(/Tabs and sections/);
+    showTabs('Japanese');
     fireEvent.change(screen.getByLabelText('Topic to move Jisho dictionary to'), {
       target: { value: 'code' },
     });
@@ -110,7 +110,7 @@ describe('search', () => {
     setup(data());
     const box = screen.getByLabelText('Search all topics');
     fireEvent.input(box, { target: { value: 'zzz' } });
-    expect(await screen.findByText('No tabs match “zzz”.')).toBeTruthy();
+    expect(await screen.findByText('Nothing matches “zzz”.')).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(screen.getAllByRole('article')).toHaveLength(2);
   });
@@ -124,5 +124,13 @@ describe('search', () => {
     await waitFor(() =>
       expect(sent).toEqual([{ type: 'restoreTab', topicId: 'jp', tabId: 'p', from: 'parked' }]),
     );
+  });
+
+  it('finds topics by name and opens them', async () => {
+    const { sent } = setup(data());
+    fireEvent.input(screen.getByLabelText('Search all topics'), { target: { value: 'japan' } });
+    expect(await screen.findByText('1 topic found')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Japanese' }));
+    await waitFor(() => expect(sent).toEqual([{ type: 'openTopic', topicId: 'jp' }]));
   });
 });

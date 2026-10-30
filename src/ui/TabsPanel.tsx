@@ -104,7 +104,7 @@ export function TabsPanel({
           }}
         >
           <input
-            class="save__input"
+            class="input"
             aria-label="Section name"
             placeholder={`Section for ${chosen.length} selected`}
             value={name}

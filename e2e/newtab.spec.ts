@@ -15,25 +15,31 @@ test('save this window from the new tab page, rename it, delete and undo', async
   const page = await pagePromise;
   await page.waitForLoadState();
 
+  await page.getByRole('button', { name: 'Save this window' }).click();
   await page.getByLabel('Save this window as').fill('Japanese');
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
 
   await expect(page.getByRole('heading', { name: 'Japanese' })).toBeVisible();
   await expect(page.locator('.badge', { hasText: 'This window' })).toBeVisible();
-  await expect(page.getByText('2 tabs', { exact: false })).toBeVisible();
+  await expect(
+    page.getByRole('article', { name: 'Japanese' }).getByText('2 tabs', { exact: false }),
+  ).toBeVisible();
 
-  await page.getByRole('button', { name: 'Rename Japanese' }).click();
+  await page.getByRole('button', { name: 'More actions for Japanese' }).click();
+  await page.getByRole('menuitem', { name: 'Rename Japanese' }).click();
   const input = page.getByLabel('New name for Japanese');
   await input.fill('日本語');
   await input.press('Enter');
   await expect(page.getByRole('heading', { name: '日本語' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Rename 日本語' }).click();
+  await page.getByRole('button', { name: 'More actions for 日本語' }).click();
+  await page.getByRole('menuitem', { name: 'Rename 日本語' }).click();
   await page.getByLabel('New name for 日本語').fill('Cancelled');
   await page.getByLabel('New name for 日本語').press('Escape');
   await expect(page.getByRole('heading', { name: '日本語' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Delete 日本語' }).click();
+  await page.getByRole('button', { name: 'More actions for 日本語' }).click();
+  await page.getByRole('menuitem', { name: 'Delete 日本語' }).click();
   await expect(page.getByRole('heading', { name: '日本語' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(page.getByRole('heading', { name: '日本語' })).toBeVisible();

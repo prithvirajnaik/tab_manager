@@ -7,11 +7,11 @@ test('loads the extension service worker', async ({ serviceWorker }) => {
 test('serves the new tab page', async ({ context, extensionId }) => {
   const page = await context.newPage();
   await page.goto(`chrome-extension://${extensionId}/newtab.html`);
-  await expect(page.getByRole('heading', { name: 'Tab Topics' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Tab Topics' })).toBeVisible();
 });
 
 test('overrides the browser new tab page', async ({ context }) => {
   const page = await context.newPage();
   await page.goto('chrome://newtab/');
-  await expect(page.getByRole('heading', { name: 'Tab Topics' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Tab Topics' })).toBeVisible();
 });

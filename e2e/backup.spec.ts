@@ -33,9 +33,11 @@ test('the recovery panel lists snapshots after a delete', async ({ ext, site }) 
   });
   await send(ext, { type: 'deleteTopic', topicId: saved.data!.topicId });
   await ext.reload();
+  await ext.getByRole('link', { name: 'Settings' }).click();
   await expect(ext.getByRole('button', { name: 'Restore deleted topic Oops' })).toBeVisible();
   await ext.getByRole('button', { name: 'Show snapshots' }).click();
   await expect(ext.getByText('1 topic · 1 tab')).toBeVisible();
   await ext.getByRole('button', { name: 'Restore deleted topic Oops' }).click();
+  await ext.getByRole('link', { name: /All topics/ }).click();
   await expect(ext.getByRole('heading', { name: 'Oops' })).toBeVisible();
 });

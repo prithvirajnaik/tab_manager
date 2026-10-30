@@ -116,3 +116,24 @@ One line of reasoning per decision not covered by PLAN.md, newest at the bottom 
 - **"Start fresh" is refused when the data can be read** again, so a stale page can never move readable data aside.
 - **Imports and Undo avoid ids held by the trash**, so restoring a deleted topic after importing the same export never duplicates tab ids.
 - **Import files over 50 MB are refused in the page**, before they reach the command channel.
+
+## Phase 8 (UI redesign)
+
+- **Plan and audit in `docs/ui-redesign-plan.md`.** Every element of the reference design was checked against the store; anything without data behind it (automatic backups, hand-picked topic icons, a stats row repeating the sidebar) was left out.
+- **All view data comes from `src/ui/selectors.ts`**, pure functions of the store with their own tests; components do not add up arrays or carry literal durations.
+- **Sidebar views in the URL hash** (`#/`, `#/closed`, `#/parked`, `#/settings`), so back, forward and reload keep the view. No router dependency. Auto-park and Backup and recovery moved to Settings.
+- **Topic colour and monogram are derived, not stored**: colour from a hash of the topic id (FNV-1a with MurmurHash3's finaliser, so short ids spread out) over the tab group palette without grey; monogram from the first grapheme of the name. No schema change; a stored colour and icon can come later as schema v2.
+- **One topic drawer replaces the three in-card `<details>` lists**, so an expanded list no longer stretches one card in the grid. It is modal: focus starts on Close, Tab is kept inside, Escape closes it and focus returns to the chip that opened it. The open list is component state, not part of the hash.
+- **Rename, Unlink and Delete moved to a ⋮ menu**; Open/Switch to and Park stay visible. Delete stays one click because the toast offers Undo.
+- **Sorting**: Created (default), Name, Last updated, Most tabs. The two that change while you browse are ordered once, when chosen or on load, with new topics first, so cards never jump. Sort and grid/list layout are page preferences in `localStorage`, not user data.
+- **Search also matches topic names** (every word, accents and case ignored), shown above tab results. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> joins <kbd>/</kbd>; the hint is chosen from the platform. Chrome gives the address bar focus first on a new tab and a page cannot take it, so shortcuts work once the page has been clicked.
+- **Auto-park days are presets** (3 to 90) plus the stored value when it is not one, so any valid stored setting still shows as-is. Mode is a three-way control because the model has three modes.
+- **The backup reminder banner became a sidebar card** with three states derived from `lastExportAt` (backed up, out of date after 14 days, never), so export is offered in one place on the main view.
+- **Not done**: the current window's tab count in the header (it needs a new `Api` call) and a topic colour/icon picker.
+
+## Phase 9 (features.md, UI items)
+
+- **Topic cards show one icon per website**, with a small count badge when the topic holds several tabs of it (`uniqueSites` in `src/ui/selectors.ts`). Sites are keyed by host without `www.`, or by protocol for pages with no host (`file:`), ordered by tab count and then by tab order. The row shows six websites and "+N" for the rest of them, since that is what fits the narrowest card.
+- **Card layout follows the new reference images**: tile, name and "N tabs · updated …", a state pill (green dot for Open and This window), the favicon row, then Open or Switch to with Park on the left and counts on the right. The counts are buttons that open the topic drawer: folder for tabs, clock for recently closed, and an archive icon for parked, which the reference leaves out but which would otherwise have no way in from the card. A count of zero is not shown.
+- **Settings has an Appearance panel**: theme (System, Light, Dark), topic layout and sort order. Layout and sort share their state with the topics toolbar. All three are display preferences in this page's `localStorage`, so they are not in backups.
+- **The theme is an attribute on the root element** (`data-theme`); no attribute means follow the browser. Dark tokens exist twice in the stylesheet (explicit, and under `prefers-color-scheme` when the theme is not forced light). `main.tsx` applies the stored theme before the first render so it does not flash.

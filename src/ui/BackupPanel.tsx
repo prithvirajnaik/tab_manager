@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { TrashEntry } from '../core/model';
+import { TRASH_DAYS, type TrashEntry } from '../core/model';
 import { plural, timeAgo } from './format';
+import { CloudIcon, DownloadIcon, HistoryIcon, UploadIcon } from './icons';
 
-const REMIND_AFTER_MS = 14 * 86_400_000;
 /** The command channel accepts up to 50 MB; real exports are far smaller. */
 export const MAX_IMPORT_BYTES = 50_000_000;
 
@@ -10,7 +10,6 @@ type SnapshotInfo = { at: number; topics: number; tabs: number };
 
 type Props = {
   lastExportAt: number | null;
-  hasTopics: boolean;
   trash: TrashEntry[];
   busy: boolean;
   now: number;
@@ -21,25 +20,6 @@ type Props = {
   onListSnapshots: () => Promise<SnapshotInfo[] | null>;
   onRestoreSnapshot: (at: number) => void;
 };
-
-/** Should the page nag about backups? Local data is lost on a profile reset. */
-export function needsBackup(lastExportAt: number | null, hasTopics: boolean, now: number) {
-  return hasTopics && (lastExportAt === null || now - lastExportAt > REMIND_AFTER_MS);
-}
-
-export function BackupReminder({ onExport, busy }: { onExport: () => void; busy: boolean }) {
-  return (
-    <div class="notice" role="note">
-      <p>
-        Your topics live only in this browser profile. Export a backup now and then, in case the
-        profile is reset.{' '}
-        <button type="button" class="btn btn--small" disabled={busy} onClick={onExport}>
-          Export backup
-        </button>
-      </p>
-    </div>
-  );
-}
 
 /** Export and import, trash, and snapshots. */
 export function BackupPanel(props: Props) {
@@ -55,23 +35,30 @@ export function BackupPanel(props: Props) {
 
   return (
     <section class="panel" aria-labelledby="backup-title">
-      <h2 id="backup-title" class="panel__title" ref={heading} tabIndex={-1}>
-        Backup and recovery
-      </h2>
-      <p class="panel__hint">
-        {lastExportAt === null ? 'Never exported.' : `Last exported ${timeAgo(lastExportAt, now)}.`}{' '}
-        Importing adds topics; it never replaces the ones you have.
-      </p>
+      <header class="panel__head">
+        <span class="panel__icon">
+          <CloudIcon />
+        </span>
+        <div>
+          <h2 id="backup-title" class="panel__title" ref={heading} tabIndex={-1}>
+            Backup and recovery
+          </h2>
+          <p class="hint">
+            {lastExportAt === null
+              ? 'Never exported.'
+              : `Last exported ${timeAgo(lastExportAt, now)}.`}{' '}
+            Your topics live only in this browser profile, so export them now and then. Importing
+            adds topics; it never replaces the ones you have.
+          </p>
+        </div>
+      </header>
       <div class="panel__row">
-        <button type="button" class="btn btn--small" disabled={busy} onClick={props.onExport}>
+        <button type="button" class="btn" disabled={busy} onClick={props.onExport}>
+          <UploadIcon size={16} />
           Export to a file
         </button>
-        <button
-          type="button"
-          class="btn btn--small"
-          disabled={busy}
-          onClick={() => file.current?.click()}
-        >
+        <button type="button" class="btn" disabled={busy} onClick={() => file.current?.click()}>
+          <DownloadIcon size={16} />
           Import from a file
         </button>
         <input
@@ -98,17 +85,17 @@ export function BackupPanel(props: Props) {
       </div>
 
       {trash.length > 0 && (
-        <div class="panel__parked">
-          <h3 class="panel__subtitle">Deleted topics (kept 30 days)</h3>
-          <ul class="results">
+        <div class="panel__section">
+          <h3 class="panel__subtitle">Deleted topics (kept {TRASH_DAYS} days)</h3>
+          <ul class="rows">
             {trash.map((e) => (
-              <li key={e.topic.id} class="result">
-                <div class="result__text">
-                  <span class="tab__title">{e.topic.name}</span>
-                  <span class="tab__host">
+              <li key={e.topic.id} class="row">
+                <span class="row__text">
+                  <span class="row__title">{e.topic.name}</span>
+                  <span class="row__meta">
                     {plural(e.topic.tabs.length, 'tab')} · deleted {timeAgo(e.deletedAt, now)}
                   </span>
-                </div>
+                </span>
                 <button
                   type="button"
                   class="btn btn--small"
@@ -124,31 +111,32 @@ export function BackupPanel(props: Props) {
         </div>
       )}
 
-      <div class="panel__parked">
+      <div class="panel__section">
         <div class="panel__row">
           <h3 class="panel__subtitle">Snapshots</h3>
           <button
             type="button"
-            class="btn btn--small"
+            class="btn btn--small panel__end"
             disabled={busy}
             onClick={() => void props.onListSnapshots().then(setSnapshots)}
           >
+            <HistoryIcon size={14} />
             {snapshots ? 'Refresh' : 'Show snapshots'}
           </button>
         </div>
         {snapshots && snapshots.length === 0 && (
-          <p class="panel__hint">No snapshots yet. One is taken before every bulk change.</p>
+          <p class="hint">No snapshots yet. One is taken before every bulk change.</p>
         )}
         {snapshots && snapshots.length > 0 && (
-          <ul class="results">
+          <ul class="rows">
             {snapshots.map((s) => (
-              <li key={s.at} class="result">
-                <div class="result__text">
-                  <span class="tab__title">{new Date(s.at).toLocaleString()}</span>
-                  <span class="tab__host">
+              <li key={s.at} class="row">
+                <span class="row__text">
+                  <span class="row__title">{new Date(s.at).toLocaleString()}</span>
+                  <span class="row__meta">
                     {plural(s.topics, 'topic')} · {plural(s.tabs, 'tab')}
                   </span>
-                </div>
+                </span>
                 {confirming === s.at ? (
                   <button
                     ref={confirmButton}

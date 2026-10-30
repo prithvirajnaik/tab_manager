@@ -6,6 +6,7 @@ import type { Command } from '../../src/core/messages';
 import { savedTab, store, topic } from '../unit/factories';
 
 afterEach(cleanup);
+beforeEach(() => history.replaceState(null, '', '#/'));
 
 function fakeApi(overrides: Partial<Api> = {}) {
   const sent: Command[] = [];
@@ -30,11 +31,9 @@ function fakeApi(overrides: Partial<Api> = {}) {
 
 const loaded = (s = store()): LoadResult => ({ ok: true, store: s });
 
-/** Opens a <details> by its summary text, as a click on the summary would. */
-function expand(summary: string) {
-  const details = screen.getByText(summary).closest('details')!;
-  details.open = true;
-  fireEvent(details, new Event('toggle'));
+/** Opens a topic's ⋮ menu so its items can be clicked. */
+function menu(name: string) {
+  fireEvent.click(screen.getByRole('button', { name: `More actions for ${name}` }));
 }
 
 describe('keepUnchanged', () => {
@@ -54,11 +53,12 @@ describe('keepUnchanged', () => {
 });
 
 describe('App', () => {
-  it('shows an empty state and the save form when there are no topics', () => {
+  it('shows an empty state and the save button when there are no topics', () => {
     const { api } = fakeApi();
     render(<App initial={loaded()} api={api} />);
     expect(screen.getByRole('heading', { name: 'No topics yet' })).toBeTruthy();
-    expect(screen.getByLabelText('Save this window as')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save this window' })).toBeTruthy();
+    expect(screen.queryByLabelText('Search all topics')).toBeNull();
   });
 
   it('lists topics with their state and renders titles as text, never HTML', () => {
@@ -92,7 +92,8 @@ describe('App', () => {
     await waitFor(() => expect(sent).toHaveLength(1));
     fireEvent.click(screen.getByRole('button', { name: 'Park Work' }));
     await waitFor(() => expect(sent).toHaveLength(2));
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Work' }));
+    menu('Work');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename Work' }));
     const input = screen.getByLabelText('New name for Work') as HTMLInputElement;
     fireEvent.input(input, { target: { value: 'Deep work' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -108,7 +109,8 @@ describe('App', () => {
   it('cancels a rename with Escape', () => {
     const { api, sent } = fakeApi();
     render(<App initial={loaded(store({ topics: [topic({ name: 'Work' })] }))} api={api} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Work' }));
+    menu('Work');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename Work' }));
     const input = screen.getByLabelText('New name for Work');
     fireEvent.input(input, { target: { value: 'Nope' } });
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -121,7 +123,8 @@ describe('App', () => {
     render(
       <App initial={loaded(store({ topics: [topic({ id: 't1', name: 'Gone' })] }))} api={api} />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Gone' }));
+    menu('Gone');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete Gone' }));
     const undo = await screen.findByRole('button', { name: 'Undo' });
     expect(screen.getByText('Deleted "Gone".')).toBeTruthy();
     fireEvent.click(undo);
@@ -133,14 +136,28 @@ describe('App', () => {
     );
   });
 
-  it('saves the current window and clears the form', async () => {
+  it('saves the current window from the popover, then closes it', async () => {
     const { api, sent } = fakeApi();
     render(<App initial={loaded()} api={api} />);
+    const button = screen.getByRole('button', { name: 'Save this window' });
+    fireEvent.click(button);
     const input = screen.getByLabelText('Save this window as') as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
     fireEvent.input(input, { target: { value: 'Japanese' } });
     fireEvent.submit(input.form!);
     await waitFor(() => expect(sent).toEqual([{ type: 'saveWindow', name: 'Japanese' }]));
-    await waitFor(() => expect(input.value).toBe(''));
+    await waitFor(() => expect(screen.queryByLabelText('Save this window as')).toBeNull());
+    expect(document.activeElement).toBe(button);
+    expect(screen.getByText('Saved this window as "Japanese".')).toBeTruthy();
+  });
+
+  it('closes the save popover with Escape without saving', () => {
+    const { api, sent } = fakeApi();
+    render(<App initial={loaded()} api={api} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Save this window' }));
+    fireEvent.keyDown(screen.getByLabelText('Save this window as'), { key: 'Escape' });
+    expect(screen.queryByLabelText('Save this window as')).toBeNull();
+    expect(sent).toEqual([]);
   });
 
   it('shows command errors', async () => {
@@ -159,7 +176,8 @@ describe('App', () => {
       />,
     );
     expect(await screen.findByText('This window')).toBeTruthy();
-    expect(screen.queryByLabelText('Save this window as')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save this window' })).toBeNull();
+    expect(screen.getByText('Mine', { selector: 'strong' })).toBeTruthy();
   });
 
   it('unlinks an open topic from its window', async () => {
@@ -170,7 +188,8 @@ describe('App', () => {
         api={api}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Unlink W from its window' }));
+    menu('W');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Unlink W from its window' }));
     await waitFor(() => expect(sent).toEqual([{ type: 'detachWindow', topicId: 't' }]));
   });
 
@@ -185,6 +204,7 @@ describe('App', () => {
     const { api, sent } = fakeApi();
     render(<App initial={{ ok: false, error: 'bad data' }} api={api} />);
     expect(screen.getByRole('alert').textContent).toContain('could not be read');
+    expect(screen.queryByRole('navigation')).toBeNull();
     expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual([
       'Download the stored data',
       'Start fresh…',
@@ -196,10 +216,12 @@ describe('App', () => {
     const { api, sent } = fakeApi();
     const t = topic({
       id: 't1',
+      name: 'Work',
       recentlyClosed: [{ ...savedTab({ id: 'c1', title: 'Lost tab' }), closedAt: 1 }],
     });
     render(<App initial={loaded(store({ topics: [t] }))} api={api} />);
-    expand('Recently closed (1)');
+    fireEvent.click(screen.getByRole('button', { name: 'Show recently closed tabs of Work (1)' }));
+    expect(screen.getByRole('dialog', { name: 'Work' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Restore Lost tab' }));
     await waitFor(() =>
       expect(sent).toEqual([
@@ -219,10 +241,11 @@ describe('App', () => {
     const { api, sent } = fakeApi();
     const t = topic({
       id: 't1',
+      name: 'Work',
       parked: [{ ...savedTab({ id: 'p1', title: 'Idle tab' }), parkedAt: 1 }],
     });
     render(<App initial={loaded(store({ topics: [t] }))} api={api} />);
-    expand('Parked (1)');
+    fireEvent.click(screen.getByRole('button', { name: 'Show parked tabs of Work (1)' }));
     fireEvent.click(screen.getByRole('button', { name: 'Restore Idle tab' }));
     await waitFor(() =>
       expect(sent).toEqual([{ type: 'restoreTab', topicId: 't1', tabId: 'p1', from: 'parked' }]),
@@ -232,14 +255,20 @@ describe('App', () => {
   it('renders 50 topics with 20 tabs each, building tab lists only when opened', () => {
     const { api } = fakeApi();
     const favicon = vi.fn((u: string) => `fav:${u}`);
+    // Ten different sites per topic, so every card has more websites than icon slots.
     const topics = Array.from({ length: 50 }, (_, i) =>
-      topic({ name: `Topic ${i}`, tabs: Array.from({ length: 20 }, () => savedTab()) }),
+      topic({
+        name: `Topic ${i}`,
+        tabs: Array.from({ length: 20 }, (_, j) =>
+          savedTab({ url: `https://site${j % 10}.test/${j}` }),
+        ),
+      }),
     );
     render(<App initial={loaded(store({ topics }))} api={{ ...api, favicon }} />);
     expect(screen.getAllByRole('article')).toHaveLength(50);
-    // Only the 12-icon strip per card, not the 20-row lists inside closed <details>.
-    expect(favicon).toHaveBeenCalledTimes(50 * 12);
-    expect(document.querySelectorAll('.tab')).toHaveLength(0);
+    // Only the 6-site icon strip per card; tab lists render only in the drawer.
+    expect(favicon).toHaveBeenCalledTimes(50 * 6);
+    expect(document.querySelectorAll('.tab, .row')).toHaveLength(0);
   });
 
   it('Enter followed by blur renames once; Escape followed by blur renames nothing', async () => {
@@ -247,12 +276,14 @@ describe('App', () => {
     render(
       <App initial={loaded(store({ topics: [topic({ id: 't1', name: 'Work' })] }))} api={api} />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Work' }));
+    menu('Work');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename Work' }));
     let input = screen.getByLabelText('New name for Work');
     fireEvent.input(input, { target: { value: 'Play' } });
     fireEvent.keyDown(input, { key: 'Escape' });
     fireEvent.blur(input);
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Work' }));
+    menu('Work');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename Work' }));
     input = screen.getByLabelText('New name for Work');
     fireEvent.input(input, { target: { value: 'Deep' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -260,13 +291,16 @@ describe('App', () => {
     await waitFor(() =>
       expect(sent).toEqual([{ type: 'renameTopic', topicId: 't1', name: 'Deep' }]),
     );
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Rename Work' }));
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'More actions for Work' }),
+    );
   });
 
   it('shows no Undo when a delete fails', async () => {
     const { api } = fakeApi({ send: async () => ({ ok: false, error: 'Nope.' }) });
     render(<App initial={loaded(store({ topics: [topic({ name: 'X' })] }))} api={api} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Delete X' }));
+    menu('X');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete X' }));
     await screen.findByRole('alert');
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
@@ -276,7 +310,8 @@ describe('App', () => {
     try {
       const { api } = fakeApi();
       render(<App initial={loaded(store({ topics: [topic({ name: 'X' })] }))} api={api} />);
-      fireEvent.click(screen.getByRole('button', { name: 'Delete X' }));
+      menu('X');
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Delete X' }));
       await vi.waitFor(() => screen.getByRole('button', { name: 'Undo' }));
       fireEvent.mouseEnter(document.querySelector('.toast')!);
       await vi.advanceTimersByTimeAsync(20_000);
