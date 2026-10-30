@@ -70,7 +70,8 @@ export const test = base.extend<{
   },
   ext: async ({ context, extensionId }, use) => {
     const page = await context.newPage();
-    await page.goto(`chrome-extension://${extensionId}/newtab.html`);
+    // "#/" opens the topics panel; the bare address is the calm home page.
+    await page.goto(`chrome-extension://${extensionId}/newtab.html#/`);
     await use(page);
   },
 });

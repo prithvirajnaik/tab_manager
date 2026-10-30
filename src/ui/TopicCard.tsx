@@ -182,13 +182,10 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: 
               {topic.name}
             </h2>
           )}
-          <p class="card__meta">
-            {plural(topic.tabs.length, 'tab')} · updated {timeAgo(topic.updatedAt, now)}
-          </p>
+          <p class="card__meta">Updated {timeAgo(topic.updatedAt, now)}</p>
         </div>
-        <span class={`badge${isCurrentWindow ? ' badge--here' : isOpen ? ' badge--open' : ''}`}>
-          {stateLabel(topic, isCurrentWindow)}
-        </span>
+        {/* Open or saved shows in the buttons; only "this window" is not visible elsewhere. */}
+        {isCurrentWindow && <span class="badge badge--here">This window</span>}
         <Menu label={`More actions for ${topic.name}`} items={items} triggerRef={menuButton} />
       </header>
 

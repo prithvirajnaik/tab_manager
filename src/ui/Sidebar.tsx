@@ -7,7 +7,7 @@ export const VIEWS = ['topics', 'closed', 'parked', 'settings'] as const;
 export type View = (typeof VIEWS)[number];
 
 export const VIEW_TITLES: Record<View, string> = {
-  topics: 'All topics',
+  topics: 'Topics',
   closed: 'Recently closed',
   parked: 'Parked tabs',
   settings: 'Settings',
@@ -21,7 +21,12 @@ export function viewFromHash(hash: string): View {
 }
 
 type Props = {
+  /** Slid into view. Out of view it is also out of the tab order. */
+  open: boolean;
   view: View;
+  /** Whether a view is open in the panel, so the current link is marked only then. */
+  current: boolean;
+
   counts: Counts;
   backup: BackupStatus;
   busy: boolean;
@@ -38,7 +43,7 @@ function NavLink({
   onNavigate,
 }: {
   view: View;
-  current: View;
+  current: View | null;
   icon: ComponentChildren;
   count?: number;
   onNavigate: (view: View) => void;
@@ -104,35 +109,50 @@ function BackupButton({
   );
 }
 
-export function Sidebar({ view, counts, backup, busy, now, onNavigate, onExport }: Props) {
+export function Sidebar({
+  open,
+  view,
+  current,
+  counts,
+  backup,
+  busy,
+  now,
+  onNavigate,
+  onExport,
+}: Props) {
   return (
-    <aside class="sidebar">
+    <aside class={`sidebar${open ? ' sidebar--open' : ''}`}>
       <nav class="nav" aria-label="Tab Topics">
         <ul class="nav__list">
           <NavLink
             view="topics"
-            current={view}
+            current={current ? view : null}
             icon={<FolderIcon />}
             count={counts.topics}
             onNavigate={onNavigate}
           />
           <NavLink
             view="closed"
-            current={view}
+            current={current ? view : null}
             icon={<ClockIcon />}
             count={counts.recentlyClosed}
             onNavigate={onNavigate}
           />
           <NavLink
             view="parked"
-            current={view}
+            current={current ? view : null}
             icon={<ArchiveIcon />}
             count={counts.parked}
             onNavigate={onNavigate}
           />
         </ul>
         <ul class="nav__list nav__list--end">
-          <NavLink view="settings" current={view} icon={<GearIcon />} onNavigate={onNavigate} />
+          <NavLink
+            view="settings"
+            current={current ? view : null}
+            icon={<GearIcon />}
+            onNavigate={onNavigate}
+          />
         </ul>
       </nav>
       <BackupButton status={backup} busy={busy} now={now} onExport={onExport} />

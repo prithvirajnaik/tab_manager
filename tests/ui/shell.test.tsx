@@ -56,10 +56,10 @@ describe('navigation', () => {
     setup();
     const nav = screen.getByRole('navigation', { name: 'Tab Topics' });
     const link = (name: RegExp) => within(nav).getByRole('link', { name });
-    expect(link(/All topics/).getAttribute('data-tip')).toBe('All topics (2)');
+    expect(link(/^Topics/).getAttribute('data-tip')).toBe('Topics (2)');
     expect(link(/Recently closed/).getAttribute('data-tip')).toBe('Recently closed (1)');
     expect(link(/Parked tabs/).getAttribute('data-tip')).toBe('Parked tabs');
-    expect(link(/All topics/).getAttribute('aria-current')).toBe('page');
+    expect(link(/^Topics/).getAttribute('aria-current')).toBe('page');
   });
 
   it('switches views through the sidebar and the URL hash', async () => {
@@ -152,9 +152,14 @@ describe('topic menu', () => {
 });
 
 describe('topics toolbar', () => {
-  it('summarises the topics from the store', () => {
+  it('shows no stats line, and a card says only when it was updated', () => {
     setup();
-    expect(screen.getByText('3 tabs · 0 open')).toBeTruthy();
+    expect(screen.queryByText(/ open$/)).toBeNull();
+    expect(document.querySelector('.toolbar .count')).toBeNull();
+    const meta = screen
+      .getAllByRole('article')
+      .map((a) => a.querySelector('.card__meta')?.textContent);
+    expect(meta.every((m) => m?.startsWith('Updated '))).toBe(true);
   });
 
   it('sorts, and freezes "Last updated" so cards do not jump on updates', async () => {
@@ -281,11 +286,59 @@ describe('appearance settings', () => {
     fireEvent.change(screen.getByLabelText('Sort topics by'), { target: { value: 'name' } });
     expect(localStorage.getItem('tab-topics:layout')).toBe('list');
     expect(localStorage.getItem('tab-topics:sort')).toBe('name');
-    fireEvent.click(screen.getByRole('link', { name: /All topics/ }));
+    fireEvent.click(screen.getByRole('link', { name: /^Topics/ }));
     expect(document.querySelector('.grid--list')).not.toBeNull();
     expect(cardNames()).toEqual(['AI', 'Japanese']);
     expect(screen.getByRole('button', { name: 'List view' }).getAttribute('aria-pressed')).toBe(
       'true',
     );
+  });
+});
+
+describe.each([
+  ['glass', 'Glass effect', 'data-glass'],
+  ['transparency', 'Transparency', 'data-transparency'],
+] as const)('%s setting', (key, label, attr) => {
+  beforeEach(() => {
+    history.replaceState(null, '', '#/settings');
+    document.documentElement.removeAttribute('data-glass');
+    document.documentElement.removeAttribute('data-transparency');
+  });
+  const strength = (name: string) =>
+    within(screen.getByRole('group', { name: `${label} strength` })).getByLabelText(name);
+
+  it('is off by default, with the strength choice disabled', () => {
+    setup();
+    expect(document.documentElement.hasAttribute(attr)).toBe(false);
+    expect((screen.getByRole('switch', { name: label }) as HTMLInputElement).checked).toBe(false);
+    expect(strength('Medium').closest('fieldset')?.disabled).toBe(true);
+  });
+
+  it('turns on, changes strength, remembers both, and turns off', () => {
+    setup();
+    fireEvent.click(screen.getByRole('switch', { name: label }));
+    expect(document.documentElement.getAttribute(attr)).toBe('medium');
+    fireEvent.click(strength('Strong'));
+    expect(document.documentElement.getAttribute(attr)).toBe('strong');
+    expect(localStorage.getItem(`tab-topics:${key}`)).toBe('on');
+    expect(localStorage.getItem(`tab-topics:${key}-level`)).toBe('strong');
+    fireEvent.click(screen.getByRole('switch', { name: label }));
+    expect(document.documentElement.hasAttribute(attr)).toBe(false);
+    expect(localStorage.getItem(`tab-topics:${key}-level`)).toBe('strong');
+  });
+
+  it('starts from the remembered setting', () => {
+    localStorage.setItem(`tab-topics:${key}`, 'on');
+    localStorage.setItem(`tab-topics:${key}-level`, 'subtle');
+    setup();
+    expect(document.documentElement.getAttribute(attr)).toBe('subtle');
+    expect((screen.getByRole('switch', { name: label }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('is independent of the other effect', () => {
+    setup();
+    fireEvent.click(screen.getByRole('switch', { name: label }));
+    const other = attr === 'data-glass' ? 'data-transparency' : 'data-glass';
+    expect(document.documentElement.hasAttribute(other)).toBe(false);
   });
 });

@@ -7,22 +7,26 @@ test('save this window from the new tab page, rename it, delete and undo', async
   site,
 }) => {
   const newtab = `chrome-extension://${extensionId}/newtab.html`;
+  // "#/" opens the topics panel instead of the calm home page.
+  const withPanel = `${newtab}#/`;
   const pagePromise = context.waitForEvent('page', (p) => p.url().startsWith(newtab));
   await ext.evaluate(
     (urls) => chrome.windows.create({ url: urls }),
-    [site.url('kana'), site.url('kanji'), newtab],
+    [site.url('kana'), site.url('kanji'), withPanel],
   );
   const page = await pagePromise;
   await page.waitForLoadState();
 
-  await page.getByRole('button', { name: 'Save this window' }).click();
+  await page.getByRole('button', { name: 'Save window' }).click();
   await page.getByLabel('Save this window as').fill('Japanese');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
 
   await expect(page.getByRole('heading', { name: 'Japanese' })).toBeVisible();
   await expect(page.locator('.badge', { hasText: 'This window' })).toBeVisible();
   await expect(
-    page.getByRole('article', { name: 'Japanese' }).getByText('2 tabs', { exact: false }),
+    page
+      .getByRole('article', { name: 'Japanese' })
+      .getByRole('button', { name: /^Show tabs of Japanese \(2\)/ }),
   ).toBeVisible();
 
   await page.getByRole('button', { name: 'More actions for Japanese' }).click();
@@ -63,13 +67,13 @@ test('park and open from the new tab page', async ({ ext, site }) => {
   const page = ext;
   await page.reload();
   const card = page.getByRole('article', { name: 'Focus' });
-  const badge = card.locator('.badge');
-  await expect(badge).toHaveText('Open');
+  // Open shows as Switch to + Park; saved shows as Open.
+  await expect(card.getByRole('button', { name: 'Switch to Focus' })).toBeVisible();
   await card.getByRole('button', { name: 'Park Focus' }).click();
-  await expect(badge).toHaveText('Saved');
+  await expect(card.getByRole('button', { name: 'Open Focus' })).toBeVisible();
 
   await card.getByRole('button', { name: 'Open Focus' }).click();
-  await expect(badge).toHaveText('Open');
+  await expect(card.getByRole('button', { name: 'Switch to Focus' })).toBeVisible();
   const store = await readStore(ext);
   expect(store.topics[0]!.windowId).not.toBeNull();
 });
@@ -110,7 +114,7 @@ test('renders 50 topics promptly after a single storage read', async ({
   }, now);
 
   const page = await context.newPage();
-  await page.goto(`chrome-extension://${extensionId}/newtab.html`);
+  await page.goto(`chrome-extension://${extensionId}/newtab.html#/`);
   await expect(page.getByRole('article')).toHaveCount(50);
   // Time from navigation start to the render call that follows the single storage read.
   const ms = await page.evaluate(

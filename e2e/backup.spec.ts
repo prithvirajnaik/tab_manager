@@ -38,6 +38,6 @@ test('the recovery panel lists snapshots after a delete', async ({ ext, site }) 
   await ext.getByRole('button', { name: 'Show snapshots' }).click();
   await expect(ext.getByText('1 topic · 1 tab')).toBeVisible();
   await ext.getByRole('button', { name: 'Restore deleted topic Oops' }).click();
-  await ext.getByRole('link', { name: /All topics/ }).click();
+  await ext.getByRole('link', { name: /^Topics/ }).click();
   await expect(ext.getByRole('heading', { name: 'Oops' })).toBeVisible();
 });

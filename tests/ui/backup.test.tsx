@@ -124,12 +124,10 @@ describe('backup and recovery', () => {
     await waitFor(() => expect(sent).toEqual([{ type: 'resetStore' }]));
   });
 
-  it('focuses search with the slash key and with Ctrl+K', () => {
+  it('focuses search with the slash key while the panel is open', () => {
+    history.replaceState(null, '', '#/');
     setup(withTopics(1));
     fireEvent.keyDown(document.body, { key: '/' });
-    expect(document.activeElement?.id).toBe('search');
-    (document.activeElement as HTMLElement).blur();
-    fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true });
     expect(document.activeElement?.id).toBe('search');
   });
 });

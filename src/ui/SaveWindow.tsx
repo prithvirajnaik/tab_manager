@@ -7,7 +7,7 @@ type Props = {
   onSave: (name: string) => Promise<boolean>;
 };
 
-/** "Save this window" button with a small name form under it. */
+/** "Save window" button with a small name form under it. */
 export function SaveWindow({ busy, onSave }: Props) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -35,13 +35,13 @@ export function SaveWindow({ busy, onSave }: Props) {
       <button
         ref={button}
         type="button"
-        class="btn btn--primary btn--lg"
+        class="btn btn--outline"
         aria-expanded={open}
         aria-controls="save-form"
         onClick={() => setOpen(!open)}
       >
         <PlusIcon />
-        Save this window
+        Save window
       </button>
       {open && (
         <form

@@ -1,14 +1,16 @@
 import { useDeferredValue } from 'preact/compat';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Command, CommandResponse } from '../core/messages';
-import { RECENTLY_CLOSED_DAYS } from '../core/model';
 import { buildIndex, searchTabs } from '../core/search';
 import type { Api, LoadResult } from './api';
 import type { AutoParkResult } from '../core/commands';
 import { AppearancePanel } from './AppearancePanel';
+import { backgroundProblem } from './background';
 import { BackupPanel } from './BackupPanel';
 import { plural } from './format';
-import { FolderIcon, GridIcon, ListIcon, ParkIcon, SearchIcon } from './icons';
+import { applyEffect, readEffect, writeEffect, type Effect } from './effects';
+import { Home } from './Home';
+import { CloseIcon, FolderIcon, GridIcon, ListIcon, ParkIcon, SearchIcon } from './icons';
 import { ParkingPanel } from './ParkingPanel';
 import { LAYOUTS, readPref, writePref, type Layout, type Theme } from './prefs';
 import { SaveWindow } from './SaveWindow';
@@ -107,6 +109,13 @@ export function App({ initial, api, now = Date.now }: Props) {
   const [sort, setSort] = useState<SortKey>(() => readPref('sort', SORTS, 'created'));
   const [layout, setLayout] = useState<Layout>(() => readPref('layout', LAYOUTS, 'grid'));
   const [theme, setTheme] = useState<Theme>(readTheme);
+  const [glass, setGlass] = useState<Effect>(() => readEffect('glass'));
+  const [transparency, setTransparency] = useState<Effect>(() => readEffect('transparency'));
+  // Home is the resting state. Any hash (even a bare "#/") means a view is open in the panel.
+  const [sheetOpen, setSheetOpen] = useState(() => location.hash !== '');
+  const [railOpen, setRailOpen] = useState(false);
+  const [background, setBackground] = useState<string | null>(null);
+  const [backgroundError, setBackgroundError] = useState<string | null>(null);
   // Minute-granular, so "updated 3 minutes ago" does not re-render every card constantly.
   const [minute, setMinute] = useState(() => Math.floor(now() / MINUTE) * MINUTE);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -127,8 +136,13 @@ export function App({ initial, api, now = Date.now }: Props) {
   }, [now]);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => applyEffect('glass', glass), [glass]);
+  useEffect(() => applyEffect('transparency', transparency), [transparency]);
   useEffect(() => {
-    const onHash = () => setView(viewFromHash(location.hash));
+    const onHash = () => {
+      setView(viewFromHash(location.hash));
+      setSheetOpen(location.hash !== '');
+    };
     window.addEventListener('hashchange', onHash);
     window.addEventListener('popstate', onHash);
     return () => {
@@ -136,6 +150,28 @@ export function App({ initial, api, now = Date.now }: Props) {
       window.removeEventListener('popstate', onHash);
     };
   }, []);
+  const backgroundUrl = useRef<string | null>(null);
+  const showBackground = (blob: Blob | null) => {
+    if (backgroundUrl.current) URL.revokeObjectURL(backgroundUrl.current);
+    backgroundUrl.current = blob ? URL.createObjectURL(blob) : null;
+    setBackground(backgroundUrl.current);
+  };
+  useEffect(() => {
+    let gone = false;
+    void api.background?.get().then((blob) => {
+      if (!gone && blob) showBackground(blob);
+    });
+    return () => {
+      gone = true;
+      if (backgroundUrl.current) URL.revokeObjectURL(backgroundUrl.current);
+    };
+  }, [api]);
+  const putAway = () => {
+    if (location.hash !== '') history.pushState(null, '', location.pathname + location.search);
+    setSheetOpen(false);
+    setQuery('');
+    setDrawer(null);
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -143,20 +179,45 @@ export function App({ initial, api, now = Date.now }: Props) {
         'input, textarea, select, [contenteditable="true"], [contenteditable=""]',
       );
       const slash =
-        e.key === '/' && !e.isComposing && !typing && !e.ctrlKey && !e.metaKey && !e.altKey;
+        e.key === '/' &&
+        !e.isComposing &&
+        !typing &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        sheetOpen;
       const modK =
         e.key.toLowerCase() === 'k' && !e.altKey && !e.shiftKey && (mac ? e.metaKey : e.ctrlKey);
-      if (slash || modK) {
+      if (slash) {
         const box = document.getElementById('search');
         if (box) {
           e.preventDefault();
           box.focus();
         }
+      } else if (modK) {
+        e.preventDefault();
+        if (sheetOpen || railOpen) {
+          putAway();
+          setRailOpen(false);
+        } else {
+          setRailOpen(true);
+        }
+      } else if (
+        e.key === 'Escape' &&
+        !e.defaultPrevented &&
+        (sheetOpen || railOpen) &&
+        // Menus, the drawer and every text field (rename, save, search) use Escape themselves.
+        // The home search bar is the exception: there it puts the rail away.
+        (!typing || target?.closest('.home')) &&
+        !target?.closest('[role="menu"], .drawer, .popover')
+      ) {
+        if (sheetOpen) putAway();
+        else setRailOpen(false);
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [mac]);
+  }, [mac, sheetOpen, railOpen]);
   useEffect(() => {
     if (drawer || !drawerOpener.current) return;
     if (drawerOpener.current.isConnected) drawerOpener.current.focus();
@@ -363,6 +424,14 @@ export function App({ initial, api, now = Date.now }: Props) {
     setLayout(next);
     writePref('layout', next);
   };
+  const changeGlass = (next: Effect) => {
+    setGlass(next);
+    writeEffect('glass', next);
+  };
+  const changeTransparency = (next: Effect) => {
+    setTransparency(next);
+    writeEffect('transparency', next);
+  };
   const changeTheme = (next: Theme) => {
     setTheme(next);
     writePref('theme', next);
@@ -371,8 +440,30 @@ export function App({ initial, api, now = Date.now }: Props) {
   const navigate = (next: View) => {
     if (location.hash !== viewHref(next)) history.pushState(null, '', viewHref(next));
     setView(next);
+    setSheetOpen(true);
     setQuery('');
     setDrawer(null);
+  };
+
+  const pickBackground = async (file: File) => {
+    const store = api.background;
+    const problem = backgroundProblem(file);
+    setBackgroundError(problem);
+    if (!store || problem) return;
+    try {
+      await store.set(file);
+      showBackground(file);
+    } catch {
+      setBackgroundError('That image could not be saved in this browser.');
+    }
+  };
+  const clearBackground = async () => {
+    setBackgroundError(null);
+    try {
+      await api.background?.clear();
+    } finally {
+      showBackground(null);
+    }
   };
 
   const save = async (name: string) => {
@@ -380,19 +471,6 @@ export function App({ initial, api, now = Date.now }: Props) {
     if (res.ok) showToast({ message: `Saved this window as "${name.trim()}".` });
     return res.ok;
   };
-
-  const subtitle = {
-    topics: currentTopic ? (
-      <>
-        This window is saved as <strong>{currentTopic.name}</strong>.
-      </>
-    ) : (
-      'This window is not saved as a topic.'
-    ),
-    closed: `Tabs closed in a topic's window in the last ${RECENTLY_CLOSED_DAYS} days.`,
-    parked: autoParkSummary(settings),
-    settings: 'Appearance, auto-park, backups and recovery.',
-  }[view];
 
   const topicsView =
     topics.length === 0 ? (
@@ -406,10 +484,6 @@ export function App({ initial, api, now = Date.now }: Props) {
       <>
         <div class="toolbar">
           <h2 class="toolbar__title">Saved topics</h2>
-          <span class="count">{topics.length}</span>
-          <p class="hint">
-            {plural(totals.tabs, 'tab')} · {totals.open} open
-          </p>
           <div class="toolbar__end">
             <label class="visually-hidden" for="sort">
               Sort topics
@@ -515,6 +589,20 @@ export function App({ initial, api, now = Date.now }: Props) {
         onTheme={changeTheme}
         onLayout={changeLayout}
         onSort={changeSort}
+        glass={glass}
+        onGlass={changeGlass}
+        transparency={transparency}
+        onTransparency={changeTransparency}
+        background={
+          api.background
+            ? {
+                has: background !== null,
+                error: backgroundError,
+                onPick: (f) => void pickBackground(f),
+                onClear: () => void clearBackground(),
+              }
+            : null
+        }
       />
       <ParkingPanel
         settings={settings}
@@ -539,10 +627,43 @@ export function App({ initial, api, now = Date.now }: Props) {
     topicsView
   );
 
+  const railVisible = railOpen || sheetOpen;
+
   return (
     <div class="app">
+      <Home
+        image={background}
+        onSearch={api.webSearch ? (text) => void api.webSearch?.(text) : null}
+        suggest={(text) => [
+          ...matchTopics(topics, text)
+            .slice(0, 3)
+            .map((t) => ({
+              key: `topic:${t.id}`,
+              label: t.name,
+              detail: `Topic · ${plural(t.tabs.length, 'tab')}`,
+              onPick: () => actions.open(t.id),
+            })),
+          ...searchTabs(index, text, 5)
+            .filter((r) => r.topicId)
+            .map((r) => ({
+              key: `tab:${r.topicId}:${r.tab.id}`,
+              label: r.tab.title || r.tab.url,
+              detail: `In ${r.topicName}`,
+              onPick: () => actions.open(r.topicId),
+            })),
+        ]}
+        active={!sheetOpen}
+      />
+      {!railVisible && (
+        <div class="edge" aria-hidden="true" onPointerEnter={() => setRailOpen(true)} />
+      )}
+      {railVisible && !sheetOpen && (
+        <div class="scrim" aria-hidden="true" onPointerDown={() => setRailOpen(false)} />
+      )}
       <Sidebar
+        open={railVisible}
         view={view}
+        current={sheetOpen}
         counts={totals}
         backup={backupStatus(settings.lastExportAt, topics.length > 0, minute)}
         busy={busy}
@@ -550,11 +671,11 @@ export function App({ initial, api, now = Date.now }: Props) {
         onNavigate={navigate}
         onExport={() => void backup.export()}
       />
-      <main class="main">
+      {sheetOpen && <div class="scrim scrim--sheet" aria-hidden="true" onPointerDown={putAway} />}
+      <main class={`sheet${sheetOpen ? ' sheet--open' : ''}`}>
         <header class="topbar">
           <div class="topbar__title">
             <h1 class="page__title">{searching ? 'Search' : VIEW_TITLES[view]}</h1>
-            <p class="hint">{subtitle}</p>
           </div>
           <div class="topbar__actions">
             {searchable && (
@@ -564,7 +685,7 @@ export function App({ initial, api, now = Date.now }: Props) {
                   id="search"
                   type="search"
                   class="search__input"
-                  aria-keyshortcuts={mac ? '/ Meta+K' : '/ Control+K'}
+                  aria-keyshortcuts="/"
                   aria-label="Search all topics"
                   placeholder="Search topics, tabs and sites"
                   value={query}
@@ -575,12 +696,21 @@ export function App({ initial, api, now = Date.now }: Props) {
                 />
                 {!query && (
                   <kbd class="search__kbd" aria-hidden="true">
-                    {mac ? '⌘K' : 'Ctrl K'}
+                    /
                   </kbd>
                 )}
               </div>
             )}
             {!currentTopic && <SaveWindow busy={busy} onSave={save} />}
+            <button
+              type="button"
+              class="btn btn--icon"
+              aria-label="Close panel"
+              title="Close (Esc)"
+              onClick={putAway}
+            >
+              <CloseIcon />
+            </button>
           </div>
         </header>
 

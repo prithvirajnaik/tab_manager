@@ -57,7 +57,7 @@ describe('App', () => {
     const { api } = fakeApi();
     render(<App initial={loaded()} api={api} />);
     expect(screen.getByRole('heading', { name: 'No topics yet' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Save this window' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save window' })).toBeTruthy();
     expect(screen.queryByLabelText('Search all topics')).toBeNull();
   });
 
@@ -79,8 +79,8 @@ describe('App', () => {
     );
     expect(screen.getByRole('heading', { name: evil })).toBeTruthy();
     expect(document.querySelector('img[src="x"]')).toBeNull();
-    expect(screen.getByText('Open', { selector: '.badge' })).toBeTruthy();
-    expect(screen.getByText('Saved', { selector: '.badge' })).toBeTruthy();
+    // Open or saved shows in the buttons, not in a status pill.
+    expect(document.querySelector('.badge')).toBeNull();
     expect(screen.getByRole('button', { name: 'Switch to Open one' })).toBeTruthy();
   });
 
@@ -139,7 +139,7 @@ describe('App', () => {
   it('saves the current window from the popover, then closes it', async () => {
     const { api, sent } = fakeApi();
     render(<App initial={loaded()} api={api} />);
-    const button = screen.getByRole('button', { name: 'Save this window' });
+    const button = screen.getByRole('button', { name: 'Save window' });
     fireEvent.click(button);
     const input = screen.getByLabelText('Save this window as') as HTMLInputElement;
     expect(document.activeElement).toBe(input);
@@ -154,7 +154,7 @@ describe('App', () => {
   it('closes the save popover with Escape without saving', () => {
     const { api, sent } = fakeApi();
     render(<App initial={loaded()} api={api} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Save this window' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save window' }));
     fireEvent.keyDown(screen.getByLabelText('Save this window as'), { key: 'Escape' });
     expect(screen.queryByLabelText('Save this window as')).toBeNull();
     expect(sent).toEqual([]);
@@ -176,8 +176,7 @@ describe('App', () => {
       />,
     );
     expect(await screen.findByText('This window')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save this window' })).toBeNull();
-    expect(screen.getByText('Mine', { selector: 'strong' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save window' })).toBeNull();
   });
 
   it('unlinks an open topic from its window', async () => {

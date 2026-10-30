@@ -3,6 +3,7 @@ import { migrate } from '../core/migrations';
 import type { Store } from '../core/model';
 import { LINKS_KEY, parseLinks } from '../core/links';
 import { STORE_KEY } from '../core/repo';
+import { idbBackground, type BackgroundStore } from './background';
 
 /** What the new tab page needs from the extension. Injected so components test without chrome. */
 export type Api = {
@@ -16,6 +17,10 @@ export type Api = {
   download(filename: string, text: string): void;
   /** The stored data exactly as it is, for the "cannot be read" screen. */
   rawStore(): Promise<string>;
+  /** Runs a web search in the default search engine, in this tab. */
+  webSearch?(text: string): Promise<void>;
+  /** The chosen home page background image. Without it, Settings offers no picker. */
+  background?: BackgroundStore;
 };
 
 export type LoadResult = { ok: true; store: Store } | { ok: false; error: string };
@@ -70,6 +75,10 @@ export const chromeApi: Api = {
   async rawStore() {
     const all = await chrome.storage.local.get(null);
     return JSON.stringify(all, null, 2);
+  },
+  background: idbBackground,
+  async webSearch(text) {
+    await chrome.search.query({ text, disposition: 'CURRENT_TAB' });
   },
   async currentTopicId() {
     try {
