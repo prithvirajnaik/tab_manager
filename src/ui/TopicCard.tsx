@@ -1,9 +1,22 @@
 import type { ComponentChildren } from 'preact';
 import { memo } from 'preact/compat';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { ClosedTab, ParkedTab, SavedTab, Topic } from '../core/model';
+import type { Topic } from '../core/model';
 import { plural, timeAgo } from './format';
-import { TabsPanel, type TopicRef } from './TabsPanel';
+import {
+  ArchiveIcon,
+  ClockIcon,
+  FolderIcon,
+  ParkIcon,
+  PencilIcon,
+  PlayIcon,
+  TrashIcon,
+  UnlinkIcon,
+} from './icons';
+import { Menu, type MenuItem } from './Menu';
+import { monogram, topicAccent, uniqueSites } from './selectors';
+
+export type DrawerPanel = 'tabs' | 'parked' | 'closed';
 
 export type TopicActions = {
   open(topicId: string): void;
@@ -16,6 +29,8 @@ export type TopicActions = {
   ungroup(topicId: string, sectionId: string): void;
   move(fromTopicId: string, tabId: string, toTopicId: string): void;
   restoreAllParked(topicId: string): void;
+  /** Opens the topic drawer on one of its lists. */
+  show(topicId: string, panel: DrawerPanel): void;
 };
 
 type Props = {
@@ -25,48 +40,32 @@ type Props = {
   now: number;
   favicon: (url: string) => string;
   actions: TopicActions;
-  /** Every topic, for "Move to…"; stable while names do not change. */
-  topicRefs: TopicRef[];
 };
 
-const MAX_ICONS = 12;
+/** Websites shown in one row at the narrowest card width; the rest show as "+N". */
+const MAX_ICONS = 6;
 
-/** A <details> whose list is only rendered while open, so closed cards stay cheap. */
-function Disclosure({ summary, children }: { summary: string; children: () => ComponentChildren }) {
-  const [open, setOpen] = useState(false);
+/** The topic's tile: its first character on its accent colour. */
+export function TopicTile({ topic }: { topic: Topic }) {
   return (
-    <details class="tabs" onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>{summary}</summary>
-      {open && <ul>{children()}</ul>}
-    </details>
+    <span class={`tile accent--${topicAccent(topic.id)}`} aria-hidden="true">
+      {monogram(topic.name)}
+    </span>
   );
 }
 
-type TabRowProps = {
-  tab: SavedTab;
-  meta: string;
-  action?: ComponentChildren;
-};
-
-function TabRow({ tab, meta, action }: TabRowProps) {
-  return (
-    <li class="tab" title={tab.url}>
-      <span class="tab__title">{tab.title || tab.url}</span>
-      {tab.pinned && <span class="tab__flag">pinned</span>}
-      <span class="tab__host">{meta}</span>
-      {action}
-    </li>
-  );
+export function stateLabel(topic: Topic, isCurrentWindow: boolean) {
+  return isCurrentWindow ? 'This window' : topic.windowId !== null ? 'Open' : 'Saved';
 }
 
-function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions, topicRefs }: Props) {
+function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(topic.name);
   // Set once Enter/Escape has handled the edit, so the blur that follows does nothing.
   const settled = useRef(false);
-  const renameButton = useRef<HTMLButtonElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
   const renameInput = useRef<HTMLInputElement>(null);
-  // Focus goes back to Rename after Enter or Escape, not after tabbing away.
+  // Focus goes back to the menu button after Enter or Escape, not after tabbing away.
   const refocus = useRef(false);
   const isOpen = topic.windowId !== null;
   const headingId = `topic-${topic.id}`;
@@ -75,7 +74,7 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions, to
     if (editing) renameInput.current?.focus();
     else if (refocus.current) {
       refocus.current = false;
-      renameButton.current?.focus();
+      menuButton.current?.focus();
     }
   }, [editing]);
 
@@ -88,187 +87,164 @@ function TopicCardImpl({ topic, isCurrentWindow, busy, now, favicon, actions, to
     setEditing(false);
   };
 
-  const restoreButton = (t: ClosedTab | ParkedTab, from: 'recentlyClosed' | 'parked') => (
-    <button
-      type="button"
-      class="btn btn--small"
-      disabled={busy}
-      aria-label={`Restore ${t.title || t.url}`}
-      onClick={() => actions.restore(topic.id, t.id, from)}
-    >
-      Restore
-    </button>
-  );
+  const items: MenuItem[] = [
+    {
+      label: 'Rename',
+      ariaLabel: `Rename ${topic.name}`,
+      icon: <PencilIcon size={16} />,
+      disabled: busy,
+      onSelect: () => {
+        settled.current = false;
+        setDraft(topic.name);
+        setEditing(true);
+      },
+    },
+    ...(isOpen
+      ? [
+          {
+            label: 'Unlink from window',
+            ariaLabel: `Unlink ${topic.name} from its window`,
+            icon: <UnlinkIcon size={16} />,
+            title: 'Stop syncing this topic with its window. The window stays open.',
+            disabled: busy,
+            onSelect: () => actions.detach(topic.id),
+          },
+        ]
+      : []),
+    {
+      label: 'Delete',
+      ariaLabel: `Delete ${topic.name}`,
+      icon: <TrashIcon size={16} />,
+      danger: true,
+      disabled: busy,
+      onSelect: () => actions.remove(topic.id),
+    },
+  ];
+
+  const stats: {
+    panel: DrawerPanel;
+    icon: ComponentChildren;
+    title: string;
+    aria: string;
+    n: number;
+  }[] = [
+    {
+      panel: 'tabs',
+      icon: <FolderIcon size={20} />,
+      title: topic.sections.length ? 'Tabs and sections' : 'Tabs',
+      aria: `Show tabs of ${topic.name}`,
+      n: topic.tabs.length,
+    },
+    {
+      panel: 'parked',
+      icon: <ArchiveIcon size={20} />,
+      title: 'Parked',
+      aria: `Show parked tabs of ${topic.name}`,
+      n: topic.parked.length,
+    },
+    {
+      panel: 'closed',
+      icon: <ClockIcon size={20} />,
+      title: 'Recently closed',
+      aria: `Show recently closed tabs of ${topic.name}`,
+      n: topic.recentlyClosed.length,
+    },
+  ];
+  const shown = stats.filter((c) => c.n > 0);
+  const sites = uniqueSites(topic.tabs);
 
   return (
     <article
-      class={`card${isOpen ? ' card--open' : ''}`}
+      class={`card accent--${topicAccent(topic.id)}${isOpen ? ' card--open' : ''}`}
       {...(editing ? { 'aria-label': topic.name } : { 'aria-labelledby': headingId })}
     >
       <header class="card__head">
-        {editing ? (
-          <input
-            class="card__rename"
-            aria-label={`New name for ${topic.name}`}
-            value={draft}
-            maxLength={200}
-            ref={renameInput}
-            onInput={(e) => setDraft(e.currentTarget.value)}
-            onBlur={() => finish(true)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === 'Escape') {
-                refocus.current = true;
-                finish(e.key === 'Enter');
-              }
-            }}
-          />
-        ) : (
-          <h2 id={headingId} class="card__title">
-            {topic.name}
-          </h2>
-        )}
-        <span class={`badge${isOpen ? ' badge--open' : ''}`}>
-          {isCurrentWindow ? 'This window' : isOpen ? 'Open' : 'Saved'}
-        </span>
+        <TopicTile topic={topic} />
+        <div class="card__heading">
+          {editing ? (
+            <input
+              class="input card__rename"
+              aria-label={`New name for ${topic.name}`}
+              value={draft}
+              maxLength={200}
+              ref={renameInput}
+              onInput={(e) => setDraft(e.currentTarget.value)}
+              onBlur={() => finish(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === 'Escape') {
+                  refocus.current = true;
+                  finish(e.key === 'Enter');
+                }
+              }}
+            />
+          ) : (
+            <h2 id={headingId} class="card__title">
+              {topic.name}
+            </h2>
+          )}
+          <p class="card__meta">Updated {timeAgo(topic.updatedAt, now)}</p>
+        </div>
+        {/* Open or saved shows in the buttons; only "this window" is not visible elsewhere. */}
+        {isCurrentWindow && <span class="badge badge--here">This window</span>}
+        <Menu label={`More actions for ${topic.name}`} items={items} triggerRef={menuButton} />
       </header>
 
-      <p class="card__meta">
-        {plural(topic.tabs.length, 'tab')} · updated {timeAgo(topic.updatedAt, now)}
-      </p>
-
-      {topic.tabs.length > 0 && (
+      {sites.length > 0 && (
         <ul class="icons" aria-hidden="true">
-          {topic.tabs.slice(0, MAX_ICONS).map((t) => (
-            <li key={t.id}>
-              <img src={favicon(t.url)} alt="" width={16} height={16} loading="lazy" />
+          {sites.slice(0, MAX_ICONS).map((site) => (
+            <li key={site.key} title={`${site.key} · ${plural(site.count, 'tab')}`}>
+              <img src={favicon(site.url)} alt="" width={22} height={22} loading="lazy" />
+              {site.count > 1 && <span class="icons__n">{site.count}</span>}
             </li>
           ))}
-          {topic.tabs.length > MAX_ICONS && (
-            <li class="icons__more">+{topic.tabs.length - MAX_ICONS}</li>
-          )}
+          {sites.length > MAX_ICONS && <li class="icons__more">+{sites.length - MAX_ICONS}</li>}
         </ul>
       )}
 
-      <div class="card__actions">
-        <button
-          type="button"
-          class="btn btn--primary"
-          disabled={busy}
-          aria-label={`${isOpen ? 'Switch to' : 'Open'} ${topic.name}`}
-          onClick={() => actions.open(topic.id)}
-        >
-          {isOpen ? 'Switch to' : 'Open'}
-        </button>
-        {isOpen && (
+      <div class="card__bar">
+        <div class="card__actions">
           <button
             type="button"
-            class="btn"
+            class="btn btn--primary btn--lg"
             disabled={busy}
-            aria-label={`Park ${topic.name}`}
-            onClick={() => actions.park(topic.id)}
+            aria-label={`${isOpen ? 'Switch to' : 'Open'} ${topic.name}`}
+            onClick={() => actions.open(topic.id)}
           >
-            Park
+            <PlayIcon size={14} />
+            {isOpen ? 'Switch to' : 'Open'}
           </button>
-        )}
-        {isOpen && (
-          <button
-            type="button"
-            class="btn btn--quiet"
-            disabled={busy}
-            aria-label={`Unlink ${topic.name} from its window`}
-            title="Stop syncing this topic with its window. The window stays open."
-            onClick={() => actions.detach(topic.id)}
-          >
-            Unlink
-          </button>
-        )}
-        <button
-          ref={renameButton}
-          type="button"
-          class="btn btn--quiet"
-          // aria-disabled, not disabled: it must stay focusable while the rename is saving.
-          aria-disabled={busy}
-          aria-label={`Rename ${topic.name}`}
-          onClick={() => {
-            if (busy) return;
-            settled.current = false;
-            setDraft(topic.name);
-            setEditing(true);
-          }}
-        >
-          Rename
-        </button>
-        <button
-          type="button"
-          class="btn btn--quiet btn--danger"
-          disabled={busy}
-          aria-label={`Delete ${topic.name}`}
-          onClick={() => actions.remove(topic.id)}
-        >
-          Delete
-        </button>
-      </div>
-
-      {topic.tabs.length > 0 && (
-        <Disclosure
-          summary={topic.sections.length ? `Tabs and sections (${topic.sections.length})` : 'Tabs'}
-        >
-          {() => (
-            <li class="tabs-panel-host">
-              <TabsPanel
-                topic={topic}
-                otherTopics={topicRefs.filter((t) => t.id !== topic.id)}
-                busy={busy}
-                favicon={favicon}
-                onGroup={(ids, name) => actions.group(topic.id, ids, name)}
-                onUngroup={(sectionId) => actions.ungroup(topic.id, sectionId)}
-                onMove={(tabId, to) => actions.move(topic.id, tabId, to)}
-              />
-            </li>
+          {isOpen && (
+            <button
+              type="button"
+              class="btn btn--lg"
+              disabled={busy}
+              aria-label={`Park ${topic.name}`}
+              title="Save the window's tabs and close it."
+              onClick={() => actions.park(topic.id)}
+            >
+              <ParkIcon size={18} />
+              Park
+            </button>
           )}
-        </Disclosure>
-      )}
-
-      {topic.parked.length > 0 && (
-        <Disclosure summary={`Parked (${topic.parked.length})`}>
-          {() => [
-            <li key="all" class="tab">
+        </div>
+        {shown.length > 0 && (
+          <div class="card__stats">
+            {shown.map((c) => (
               <button
+                key={c.panel}
                 type="button"
-                class="btn btn--small"
-                disabled={busy}
-                aria-label={`Restore all parked tabs of ${topic.name}`}
-                onClick={() => actions.restoreAllParked(topic.id)}
+                class="stat"
+                title={c.title}
+                aria-label={`${c.aria} (${c.n})`}
+                onClick={() => actions.show(topic.id, c.panel)}
               >
-                Restore all
+                {c.icon}
+                <span>{c.n}</span>
               </button>
-            </li>,
-            ...topic.parked.map((t) => (
-              <TabRow
-                key={t.id}
-                tab={t}
-                meta={timeAgo(t.parkedAt, now)}
-                action={restoreButton(t, 'parked')}
-              />
-            )),
-          ]}
-        </Disclosure>
-      )}
-
-      {topic.recentlyClosed.length > 0 && (
-        <Disclosure summary={`Recently closed (${topic.recentlyClosed.length})`}>
-          {() =>
-            topic.recentlyClosed.map((t) => (
-              <TabRow
-                key={t.id}
-                tab={t}
-                meta={timeAgo(t.closedAt, now)}
-                action={restoreButton(t, 'recentlyClosed')}
-              />
-            ))
-          }
-        </Disclosure>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
     </article>
   );
 }

@@ -13,7 +13,16 @@ export default defineConfig({
     // Tab.lastAccessed is Chrome 121+; 30s alarms are Chrome 120+.
     minimum_chrome_version: '121',
     // favicon: read icons from the browser's cache instead of fetching them from sites.
-    permissions: ['tabs', 'storage', 'unlimitedStorage', 'alarms', 'tabGroups', 'favicon'],
+    // search: the home page search bar runs your default search engine when you submit it.
+    permissions: [
+      'tabs',
+      'storage',
+      'unlimitedStorage',
+      'alarms',
+      'tabGroups',
+      'favicon',
+      'search',
+    ],
   },
   vite: () => ({
     plugins: [preact()],
