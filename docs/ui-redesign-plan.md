@@ -202,3 +202,69 @@ both colour schemes, and a 375px-wide screenshot in Playwright.
   reference? Recommended: ⋮, since Undo covers mistakes but the button sits next to Open.
 - Should the **list view** be in v1, or wait until someone has more than ~12 topics?
 - Should we take on the **schema v2** colour/icon step at all, or are derived accents enough?
+
+---
+
+## 8. Revision: home page with a slide-in rail (workflow image)
+
+The workflow shows three frames: (1) a calm browser home with a search bar, (2) Ctrl+K slides
+the icon rail in from the left, (3) a panel of topic cards rises from the bottom. This replaces
+the "rail and cards always on screen" layout from sections 3 and 6.
+
+### What is not possible
+
+Frames 1 and 2 draw the rail over Brave's own new tab page. Extensions cannot run on
+browser-internal pages, so we cannot overlay that page. The nearest option is to own the whole
+new tab page (we already do) and make it look like the calm home in frame 1. Brave's logo,
+widgets and wallpaper are not available to us and are not copied.
+
+### Decisions (from the user)
+
+| Question                                    | Decision                                                                                                                                       |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Home hides the rail and topics until Ctrl+K | Yes, as in the workflow                                                                                                                        |
+| Search bar on home                          | Yes. Adds the `search` permission; runs the default engine with `chrome.search.query` in the current tab                                       |
+| Background                                  | An image the user picks, saved in this browser only. Until one is chosen, a gradient built from the theme tokens. No remote images, no network |
+
+### Flow and states
+
+1. **Home.** Background, search bar, and a small hint "Press Ctrl+K for your topics". No topic
+   data on screen. The search input is focused on load.
+2. **Rail open.** Ctrl+K (⌘K on Mac) or moving the pointer to the left edge slides the pill rail
+   in. Esc, Ctrl+K again, or a click outside hides it. Reduced motion: no slide, it just appears.
+3. **Panel open.** Choosing a rail item raises a bottom sheet with that view: All topics,
+   Recently closed, Parked tabs or Settings. The sheet reuses the existing views unchanged.
+   Esc closes the sheet first, then the rail. The URL hash still names the open view, so a
+   reload or a new-tab link lands on the same sheet.
+4. **Deep links.** A hash such as `#/settings` opens straight to the sheet with the rail visible,
+   so existing e2e paths and bookmarks keep working.
+
+### Impact on what exists
+
+- **Shortcuts.** Ctrl+K moves from "focus the topic search" to "toggle the rail". Topic search
+  moves into the sheet header and keeps `/`. The focus-first caveat stays: a new tab gives the
+  address bar focus, so the shortcut only works after the page is focused. The search input is
+  auto-focused on load to cover the common case, to be checked in Brave.
+- **Backup cloud and counts.** They live on the rail, unchanged. Counts remain in hover labels.
+- **Search permission.** The README privacy statement must say the new tab page can run a web
+  search in the default engine only when the user submits the bar.
+- **Background image.** Stored as a Blob in IndexedDB (too large for `localStorage`), excluded
+  from export like the other display preferences, and removable. Size is capped, so a huge
+  photo cannot fill storage. A broken or missing image falls back to the gradient.
+
+### Build steps
+
+1. **Home and search.** `Home.tsx` with the gradient background and search bar, the `search`
+   permission, tests for query submission and empty input.
+2. **Rail and sheet choreography.** Rail hidden by default, slide-in on Ctrl+K and the left edge,
+   bottom sheet with focus trap, Esc order, hash sync, reduced motion. Update the e2e specs.
+3. **Background picker.** Settings control, IndexedDB storage with a size cap, fallback, remove.
+4. **Docs.** `docs/decisions.md`, README privacy and shortcut lines.
+
+### Risks to check before building
+
+- Whether Brave focuses the page or the address bar on an overridden new tab.
+- Whether `chrome.search.query` with `disposition: 'CURRENT_TAB'` behaves the same in Brave as in
+  Chromium.
+- Ctrl+K is the browser's own "search" shortcut when the address bar has focus, so the extension
+  must not claim it as a global command. It is a page-level key handler only.
